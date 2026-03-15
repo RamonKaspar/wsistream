@@ -30,5 +30,8 @@ htmlcov/
 # Local data (WSI files)
 data/
 
+# Demo output
+wsistream_demo_output/
+
 # MkDocs build
 site/

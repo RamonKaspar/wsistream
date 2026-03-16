@@ -157,6 +157,10 @@ class PatchPipeline:
     seed: int | None = None
 
     def __post_init__(self) -> None:
+        if self.slide_sampling not in ("sequential", "random"):
+            raise ValueError(
+                f"slide_sampling must be 'sequential' or 'random', got {self.slide_sampling!r}"
+            )
         self.slide_paths = [str(p) for p in self.slide_paths]
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()

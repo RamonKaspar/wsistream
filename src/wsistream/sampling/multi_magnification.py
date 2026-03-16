@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -11,6 +12,8 @@ from wsistream.sampling.base import PatchSampler
 from wsistream.sampling.random import RandomSampler
 from wsistream.slide import SlideHandle
 from wsistream.types import PatchCoordinate, TissueMask
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -61,6 +64,10 @@ class MultiMagnificationSampler(PatchSampler):
             # No MPP metadata: fall back to single-level random sampling.
             # Use a seed derived from the persistent RNG so that repeated
             # calls (e.g. cycle mode) produce different coordinates.
+            logger.warning(
+                "Slide %s has no MPP metadata; falling back to level-0 random sampling",
+                slide.properties.path if hasattr(slide.properties, 'path') else "unknown",
+            )
             inner = RandomSampler(
                 patch_size=self.patch_size, num_patches=self.num_patches,
                 level=0, tissue_threshold=self.tissue_threshold,

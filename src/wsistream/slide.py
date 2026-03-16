@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
 
 from wsistream.backends.base import SlideBackend
 from wsistream.types import SlideProperties
+
+logger = logging.getLogger(__name__)
 
 
 class SlideHandle:
@@ -32,7 +35,14 @@ class SlideHandle:
         self._path = str(path)
         self._backend = backend
         self._backend.open(self._path)
-        self._properties = self._backend.get_properties()
+        try:
+            self._properties = self._backend.get_properties()
+        except Exception:
+            self._backend.close()
+            raise
+        logger.debug("Opened %s (%dx%d, %d levels, mpp=%s)",
+                     self._path, *self._properties.dimensions,
+                     self._properties.level_count, self._properties.mpp)
 
     @property
     def properties(self) -> SlideProperties:
@@ -62,6 +72,7 @@ class SlideHandle:
         return best_level
 
     def close(self) -> None:
+        logger.debug("Closing %s", self._path)
         self._backend.close()
 
     def __enter__(self) -> SlideHandle:

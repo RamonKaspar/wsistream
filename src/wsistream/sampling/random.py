@@ -64,6 +64,12 @@ class RandomSampler(PatchSampler):
         else:
             level = self.level
 
+        if level < 0 or level >= props.level_count:
+            raise ValueError(
+                f"level={level} is out of range for slide with "
+                f"{props.level_count} levels (path={props.path!r})"
+            )
+
         ds = props.level_downsamples[level]
         patch_size_l0 = int(self.patch_size * ds)
         max_x = props.width - patch_size_l0

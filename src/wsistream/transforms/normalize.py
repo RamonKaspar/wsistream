@@ -40,6 +40,13 @@ class NormalizeTransform(PatchTransform):
                 "Example: NormalizeTransform(mean=(0.485, 0.456, 0.406), "
                 "std=(0.229, 0.224, 0.225))"
             )
+        if len(self.mean) != 3 or len(self.std) != 3:
+            raise ValueError(
+                f"mean and std must be 3-element tuples (RGB), "
+                f"got mean={self.mean}, std={self.std}"
+            )
+        if any(s == 0 for s in self.std):
+            raise ValueError(f"std contains zero which would cause division by zero: {self.std}")
 
     def __call__(self, image: np.ndarray) -> np.ndarray:
         img = image.astype(np.float32) / 255.0

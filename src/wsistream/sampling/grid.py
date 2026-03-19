@@ -27,6 +27,11 @@ class GridSampler(PatchSampler):
         self, slide: SlideHandle, tissue_mask: TissueMask
     ) -> Iterator[PatchCoordinate]:
         props = slide.properties
+        if self.level < 0 or self.level >= props.level_count:
+            raise ValueError(
+                f"level={self.level} is out of range for slide with "
+                f"{props.level_count} levels (path={props.path!r})"
+            )
         stride = self.stride or self.patch_size
         ds = props.level_downsamples[self.level]
         patch_l0 = int(self.patch_size * ds)

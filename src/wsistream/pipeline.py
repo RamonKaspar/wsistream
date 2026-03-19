@@ -165,6 +165,10 @@ class PatchPipeline:
             raise ValueError(
                 f"slide_sampling must be 'sequential' or 'random', got {self.slide_sampling!r}"
             )
+        if self.pool_size < 1:
+            raise ValueError(f"pool_size must be >= 1, got {self.pool_size}")
+        if self.patches_per_slide < 1:
+            raise ValueError(f"patches_per_slide must be >= 1, got {self.patches_per_slide}")
         self.slide_paths = resolve_slide_paths(self.slide_paths)
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()

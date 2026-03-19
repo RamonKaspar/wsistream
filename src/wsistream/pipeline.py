@@ -118,7 +118,8 @@ class PatchPipeline:
     patch_filter : PatchFilter or None
         Per-tile quality filter applied after extraction, before transforms.
         A rejected patch is discarded and the pipeline moves on to the next
-        sample (does not count towards ``patches_per_slide``).
+        sample.  Rejected patches still count towards ``patches_per_slide``
+        to prevent infinite loops when a filter rejects everything.
     transforms : PatchTransform or None
         Transform pipeline applied to each patch.
     dataset_adapter : DatasetAdapter or None
@@ -356,7 +357,7 @@ class PatchPipeline:
                 if not self.cycle:
                     break
                 # Never open more concurrent copies than there are unique slides
-                if len(pool) >= len(self.slide_paths):
+                if len(pool) >= len(set(self.slide_paths)):
                     break
                 slide_queue.extend(self._get_slide_order())
                 if not slide_queue:
@@ -387,8 +388,8 @@ class PatchPipeline:
         backend = copy.deepcopy(self.backend)
         slide = SlideHandle(slide_path, backend=backend)
 
-        # Everything after open() must be wrapped so that a failure in
-        # tissue detection or sampler setup still closes the slide.
+        # Everything after open() must be wrapped so that a failure
+        # closes the slide — including stats update and PoolEntry creation.
         try:
             thumbnail = slide.get_thumbnail(self.thumbnail_size)
             th, tw = thumbnail.shape[:2]
@@ -402,29 +403,29 @@ class PatchPipeline:
                 slide_dimensions=slide.properties.dimensions,
             )
             sampler_iter = iter(self.sampler.sample(slide, tissue_mask))
+
+            # Only count as processed after full setup succeeds
+            self._stats.slides_processed += 1
+            self._stats.tissue_fractions.append(tissue_mask.tissue_fraction)
+            if metadata is not None:
+                if metadata.cancer_type:
+                    ct = metadata.cancer_type
+                    self._stats.cancer_type_counts[ct] = (
+                        self._stats.cancer_type_counts.get(ct, 0) + 1
+                    )
+                if metadata.sample_type:
+                    st = metadata.sample_type
+                    self._stats.sample_type_counts[st] = (
+                        self._stats.sample_type_counts.get(st, 0) + 1
+                    )
+
+            return _PoolEntry(
+                slide=slide, sampler_iter=sampler_iter,
+                tissue_mask=tissue_mask, metadata=metadata,
+            )
         except Exception:
             slide.close()
             raise
-
-        # Only count as processed after full setup succeeds
-        self._stats.slides_processed += 1
-        self._stats.tissue_fractions.append(tissue_mask.tissue_fraction)
-        if metadata is not None:
-            if metadata.cancer_type:
-                ct = metadata.cancer_type
-                self._stats.cancer_type_counts[ct] = (
-                    self._stats.cancer_type_counts.get(ct, 0) + 1
-                )
-            if metadata.sample_type:
-                st = metadata.sample_type
-                self._stats.sample_type_counts[st] = (
-                    self._stats.sample_type_counts.get(st, 0) + 1
-                )
-
-        return _PoolEntry(
-            slide=slide, sampler_iter=sampler_iter,
-            tissue_mask=tissue_mask, metadata=metadata,
-        )
 
     def _close_entry(self, entry: _PoolEntry) -> None:
         try:

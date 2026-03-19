@@ -36,6 +36,28 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class _TissueFractionStats:
+    """Running min/max/mean for tissue fractions without storing every value."""
+
+    count: int = 0
+    total: float = 0.0
+    min_val: float = float("inf")
+    max_val: float = float("-inf")
+
+    def update(self, value: float) -> None:
+        self.count += 1
+        self.total += value
+        if value < self.min_val:
+            self.min_val = value
+        if value > self.max_val:
+            self.max_val = value
+
+    @property
+    def mean(self) -> float | None:
+        return self.total / self.count if self.count > 0 else None
+
+
+@dataclass
 class PipelineStats:
     """Accumulates statistics during pipeline execution for logging."""
 
@@ -43,7 +65,7 @@ class PipelineStats:
     slides_failed: int = 0
     patches_extracted: int = 0
     patches_filtered: int = 0
-    tissue_fractions: list[float] = field(default_factory=list)
+    tissue_fractions: _TissueFractionStats = field(default_factory=_TissueFractionStats)
     magnification_counts: dict[float | None, int] = field(default_factory=dict)
     cancer_type_counts: dict[str, int] = field(default_factory=dict)
     sample_type_counts: dict[str, int] = field(default_factory=dict)
@@ -57,11 +79,10 @@ class PipelineStats:
             "pipeline/patches_extracted": self.patches_extracted,
             "pipeline/patches_filtered": self.patches_filtered,
         }
-        if self.tissue_fractions:
-            fracs = np.array(self.tissue_fractions)
-            result["pipeline/mean_tissue_fraction"] = float(fracs.mean())
-            result["pipeline/min_tissue_fraction"] = float(fracs.min())
-            result["pipeline/max_tissue_fraction"] = float(fracs.max())
+        if self.tissue_fractions.count > 0:
+            result["pipeline/mean_tissue_fraction"] = self.tissue_fractions.mean
+            result["pipeline/min_tissue_fraction"] = self.tissue_fractions.min_val
+            result["pipeline/max_tissue_fraction"] = self.tissue_fractions.max_val
         for mpp, count in self.magnification_counts.items():
             key = f"pipeline/mpp_{mpp:.2f}" if mpp is not None else "pipeline/mpp_unknown"
             result[key] = count
@@ -413,7 +434,7 @@ class PatchPipeline:
 
             # Only count as processed after full setup succeeds
             self._stats.slides_processed += 1
-            self._stats.tissue_fractions.append(tissue_mask.tissue_fraction)
+            self._stats.tissue_fractions.update(tissue_mask.tissue_fraction)
             if metadata is not None:
                 if metadata.cancer_type:
                     ct = metadata.cancer_type

@@ -37,7 +37,7 @@ def _make_pipeline(n_slides=3, patches_per_slide=5, **kwargs) -> PatchPipeline:
         backend=FakeBackend(),
         tissue_detector=OtsuTissueDetector(),
         sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
-        pool_size=min(2, n_slides),
+        pool_size=max(1, min(2, n_slides)),
         patches_per_slide=patches_per_slide,
     )
     defaults.update(kwargs)
@@ -129,7 +129,8 @@ class TestPipelineStats:
         stats = PipelineStats()
         stats.slides_processed = 5
         stats.patches_extracted = 100
-        stats.tissue_fractions = [0.3, 0.5, 0.7]
+        for v in [0.3, 0.5, 0.7]:
+            stats.tissue_fractions.update(v)
         stats.magnification_counts = {0.5: 60, 1.0: 40}
         stats.cancer_type_counts = {"TCGA-BRCA": 3, "TCGA-LUAD": 2}
         stats.sample_type_counts = {"Primary Solid Tumor": 5}
@@ -172,7 +173,7 @@ class TestPipelineStats:
 
         assert pipeline.stats.slides_processed == 0
         assert pipeline.stats.patches_extracted == 0
-        assert pipeline.stats.tissue_fractions == []
+        assert pipeline.stats.tissue_fractions.count == 0
 
     def test_mpp_none_in_dict(self):
         stats = PipelineStats()

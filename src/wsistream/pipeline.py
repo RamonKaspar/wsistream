@@ -28,7 +28,9 @@ from wsistream.slide import SlideHandle
 from wsistream.tissue.base import TissueDetector
 from wsistream.tissue.otsu import OtsuTissueDetector
 from wsistream.transforms.base import PatchTransform
-from wsistream.types import PatchCoordinate, PatchResult, SlideMetadata, TissueMask
+from wsistream.types import (
+    PatchCoordinate, PatchResult, SlideMetadata, TissueMask, resolve_slide_paths,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +108,9 @@ class PatchPipeline:
 
     Parameters
     ----------
-    slide_paths : list[str | Path]
-        Paths to WSI files.
+    slide_paths : str, Path, or list
+        A directory path (all WSI files are collected automatically),
+        a single file path, or an explicit list of file paths.
     backend : SlideBackend
         Explicit backend instance used as a prototype.  A deep copy is
         created for each slide, preserving any constructor configuration.
@@ -143,7 +146,7 @@ class PatchPipeline:
         Random seed for slide-level shuffling.
     """
 
-    slide_paths: list[str | Path] = field(default_factory=list)
+    slide_paths: str | Path | list[str | Path] = field(default_factory=list)
     backend: SlideBackend = field(default_factory=lambda: _missing_backend())
     tissue_detector: TissueDetector = field(default_factory=OtsuTissueDetector)
     sampler: PatchSampler = field(default_factory=RandomSampler)
@@ -162,7 +165,7 @@ class PatchPipeline:
             raise ValueError(
                 f"slide_sampling must be 'sequential' or 'random', got {self.slide_sampling!r}"
             )
-        self.slide_paths = [str(p) for p in self.slide_paths]
+        self.slide_paths = resolve_slide_paths(self.slide_paths)
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
         # Mix PID into all seeds so workers (spawn or fork) diverge.

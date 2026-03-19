@@ -2,9 +2,34 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, fields
+from pathlib import Path
 
 import numpy as np
+
+WSI_EXTENSIONS = {".svs", ".tiff", ".tif", ".ndpi", ".mrxs", ".vms", ".scn", ".bif"}
+
+
+def resolve_slide_paths(slide_paths: str | Path | list[str | Path]) -> list[str]:
+    """Resolve slide paths from a directory, a single file, or a list of files.
+
+    If ``slide_paths`` is a directory, all files with WSI extensions are
+    collected recursively.  Otherwise it is treated as a list of explicit
+    file paths.
+    """
+    if isinstance(slide_paths, (str, Path)):
+        p = Path(slide_paths)
+        if p.is_dir():
+            found = sorted(
+                str(f) for f in p.rglob("*") if f.suffix.lower() in WSI_EXTENSIONS
+            )
+            if not found:
+                raise FileNotFoundError(f"No WSI files found in {p}")
+            return found
+        # Single file path
+        return [str(p)]
+    return [str(p) for p in slide_paths]
 
 
 @dataclass(frozen=True)
@@ -93,6 +118,22 @@ class SlideMetadata:
     cancer_type: str | None = None
     sample_type: str | None = None
     extra: dict = field(default_factory=dict)
+
+    def to_flat_dict(self) -> dict[str, str]:
+        """Return a flat dict of strings suitable for batched collation."""
+        return {
+            f.name: json.dumps(getattr(self, f.name)) if f.name == "extra"
+            else (getattr(self, f.name) or "")
+            for f in fields(self)
+        }
+
+    @classmethod
+    def empty_dict(cls) -> dict[str, str]:
+        """Return a flat dict with empty defaults for every field."""
+        return {
+            f.name: "{}" if f.name == "extra" else ""
+            for f in fields(cls)
+        }
 
 
 @dataclass(frozen=True)

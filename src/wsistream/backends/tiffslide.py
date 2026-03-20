@@ -47,7 +47,17 @@ class TiffSlideBackend(SlideBackend):
 
     def get_properties(self) -> SlideProperties:
         s = self._slide
-        mpp = self._safe_float(s.properties.get("openslide.mpp-x"))
+        # TiffSlide v3+ uses "tiffslide.*" property keys, not "openslide.*".
+        # Fall back to openslide keys for older versions or slides opened
+        # via openslide-compatible property dicts.
+        mpp = (
+            self._safe_float(s.properties.get("tiffslide.mpp-x"))
+            or self._safe_float(s.properties.get("openslide.mpp-x"))
+        )
+        vendor = (
+            s.properties.get("tiffslide.vendor")
+            or s.properties.get("openslide.vendor")
+        )
         return SlideProperties(
             path=self._path,
             dimensions=s.dimensions,
@@ -55,7 +65,7 @@ class TiffSlideBackend(SlideBackend):
             level_dimensions=tuple(s.level_dimensions),
             level_downsamples=tuple(s.level_downsamples),
             mpp=mpp,
-            vendor=s.properties.get("openslide.vendor"),
+            vendor=vendor,
         )
 
     def __repr__(self) -> str:

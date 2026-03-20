@@ -12,24 +12,27 @@ WSI_EXTENSIONS = {".svs", ".tiff", ".tif", ".ndpi", ".mrxs", ".vms", ".scn", ".b
 
 
 def resolve_slide_paths(slide_paths: str | Path | list[str | Path]) -> list[str]:
-    """Resolve slide paths from a directory, a single file, or a list of files.
+    """Resolve slide paths from a directory, a single file, or a list.
 
-    If ``slide_paths`` is a directory, all files with WSI extensions are
-    collected recursively.  Otherwise it is treated as a list of explicit
-    file paths.
+    Accepts a directory path, a single file path, or a list of file/directory
+    paths.  Directories are expanded recursively to all WSI files inside them.
     """
     if isinstance(slide_paths, (str, Path)):
-        p = Path(slide_paths)
+        slide_paths = [slide_paths]
+
+    resolved: list[str] = []
+    for entry in slide_paths:
+        p = Path(entry)
         if p.is_dir():
             found = sorted(
                 str(f) for f in p.rglob("*") if f.suffix.lower() in WSI_EXTENSIONS
             )
             if not found:
                 raise FileNotFoundError(f"No WSI files found in {p}")
-            return found
-        # Single file path
-        return [str(p)]
-    return [str(p) for p in slide_paths]
+            resolved.extend(found)
+        else:
+            resolved.append(str(p))
+    return resolved
 
 
 @dataclass(frozen=True)

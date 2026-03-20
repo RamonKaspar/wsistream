@@ -58,14 +58,5 @@ class TiffSlideBackend(SlideBackend):
             vendor=s.properties.get("openslide.vendor"),
         )
 
-    @staticmethod
-    def _safe_float(val: str | None) -> float | None:
-        if val is None:
-            return None
-        try:
-            return float(val)
-        except (ValueError, TypeError):
-            return None
-
     def __repr__(self) -> str:
         return "TiffSlideBackend()"

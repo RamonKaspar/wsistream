@@ -41,3 +41,13 @@ class SlideBackend(ABC):
     def get_properties(self) -> SlideProperties:
         """Extract slide metadata."""
         ...
+
+    @staticmethod
+    def _safe_float(val: str | None) -> float | None:
+        """Parse a string to float, returning None on failure."""
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None

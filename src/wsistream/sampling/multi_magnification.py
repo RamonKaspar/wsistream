@@ -53,6 +53,22 @@ class MultiMagnificationSampler(PatchSampler):
     seed: int | None = None
 
     def __post_init__(self) -> None:
+        if not self.target_mpps:
+            raise ValueError("target_mpps must be a non-empty list")
+        if any(m <= 0 for m in self.target_mpps):
+            raise ValueError(f"all target_mpps must be > 0, got {self.target_mpps}")
+        if self.mpp_weights is not None:
+            if len(self.mpp_weights) != len(self.target_mpps):
+                raise ValueError(
+                    f"mpp_weights length ({len(self.mpp_weights)}) must match "
+                    f"target_mpps length ({len(self.target_mpps)})"
+                )
+            if sum(self.mpp_weights) <= 0:
+                raise ValueError(f"mpp_weights must sum to > 0, got {self.mpp_weights}")
+        if self.patch_size < 1:
+            raise ValueError(f"patch_size must be >= 1, got {self.patch_size}")
+        if self.num_patches < -1 or self.num_patches == 0:
+            raise ValueError(f"num_patches must be -1 (infinite) or >= 1, got {self.num_patches}")
         self._rng = np.random.default_rng(self.seed)
 
     def sample(

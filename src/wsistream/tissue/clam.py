@@ -75,6 +75,16 @@ class CLAMTissueDetector(TissueDetector):
     max_n_holes: int = 8
     ref_patch_size: int = 512
 
+    def __post_init__(self) -> None:
+        if self.mthresh < 1 or self.mthresh % 2 == 0:
+            raise ValueError(f"mthresh must be a positive odd integer, got {self.mthresh}")
+        if self.close < 0:
+            raise ValueError(f"close must be >= 0, got {self.close}")
+        if self.max_n_holes < 0:
+            raise ValueError(f"max_n_holes must be >= 0, got {self.max_n_holes}")
+        if self.ref_patch_size < 1:
+            raise ValueError(f"ref_patch_size must be >= 1, got {self.ref_patch_size}")
+
     def detect(
         self, thumbnail: np.ndarray, downsample: tuple[float, float] = (1.0, 1.0)
     ) -> np.ndarray:

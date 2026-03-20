@@ -50,6 +50,14 @@ class OtsuTissueDetector(TissueDetector):
     morph_close_ksize: int = 5
     min_area_ratio: float = 0.001
 
+    def __post_init__(self) -> None:
+        if self.blur_ksize < 1 or self.blur_ksize % 2 == 0:
+            raise ValueError(f"blur_ksize must be a positive odd integer, got {self.blur_ksize}")
+        if self.morph_close_ksize < 0:
+            raise ValueError(f"morph_close_ksize must be >= 0, got {self.morph_close_ksize}")
+        if self.min_area_ratio < 0:
+            raise ValueError(f"min_area_ratio must be >= 0, got {self.min_area_ratio}")
+
     def detect(
         self, thumbnail: np.ndarray, downsample: tuple[float, float] = (1.0, 1.0)
     ) -> np.ndarray:

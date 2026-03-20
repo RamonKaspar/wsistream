@@ -50,6 +50,14 @@ class RandomSampler(PatchSampler):
     seed: int | None = None
 
     def __post_init__(self) -> None:
+        if self.patch_size < 1:
+            raise ValueError(f"patch_size must be >= 1, got {self.patch_size}")
+        if self.num_patches < -1 or self.num_patches == 0:
+            raise ValueError(f"num_patches must be -1 (infinite) or >= 1, got {self.num_patches}")
+        if self.target_mpp is not None and self.target_mpp <= 0:
+            raise ValueError(f"target_mpp must be > 0, got {self.target_mpp}")
+        if self.max_retries < 1:
+            raise ValueError(f"max_retries must be >= 1, got {self.max_retries}")
         self._rng = np.random.default_rng(self.seed)
 
     def sample(

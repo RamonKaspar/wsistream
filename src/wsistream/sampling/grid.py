@@ -23,6 +23,12 @@ class GridSampler(PatchSampler):
     stride: int | None = None  # defaults to patch_size (non-overlapping)
     tissue_threshold: float = 0.4
 
+    def __post_init__(self) -> None:
+        if self.patch_size < 1:
+            raise ValueError(f"patch_size must be >= 1, got {self.patch_size}")
+        if self.stride is not None and self.stride < 1:
+            raise ValueError(f"stride must be >= 1 or None, got {self.stride}")
+
     def sample(
         self, slide: SlideHandle, tissue_mask: TissueMask
     ) -> Iterator[PatchCoordinate]:

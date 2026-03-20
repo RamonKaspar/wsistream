@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 from pathlib import Path
 
 import numpy as np
@@ -35,10 +34,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def _find_slides(slide_dir: str) -> list[str]:
-    slides = []
-    for ext in ("*.svs", "*.tiff", "*.tif", "*.ndpi"):
-        slides.extend(glob.glob(str(Path(slide_dir) / ext)))
-    return sorted(slides)
+    from wsistream.types import WSI_EXTENSIONS
+    return sorted(
+        str(f) for f in Path(slide_dir).rglob("*") if f.suffix.lower() in WSI_EXTENSIONS
+    )
 
 
 @pytest.fixture(scope="session")
@@ -189,3 +188,11 @@ def random_patch():
 def random_patch_256():
     """Random 256x256 RGB uint8 patch."""
     return np.random.randint(0, 255, (256, 256, 3), dtype=np.uint8)
+
+
+# ── shared test helpers ──
+
+
+def fake_slide_paths(n: int) -> list[str]:
+    """Generate n fake slide paths for unit tests."""
+    return [f"slide_{i}.svs" for i in range(n)]

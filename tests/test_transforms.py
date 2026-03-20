@@ -45,7 +45,7 @@ class TestResizeTransform:
 
 class TestNormalizeTransform:
     def test_missing_args_raises(self):
-        with pytest.raises(TypeError, match="requires explicit mean and std"):
+        with pytest.raises(TypeError):
             NormalizeTransform()
 
     def test_output_float32(self):

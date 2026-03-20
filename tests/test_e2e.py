@@ -351,9 +351,8 @@ class TestPipelineStats:
         list(pipeline)
 
         fracs = pipeline.stats.tissue_fractions
-        assert len(fracs) == len(slides)
-        for f in fracs:
-            assert 0.0 <= f <= 1.0
+        assert fracs.count == len(slides)
+        assert 0.0 <= fracs.min_val <= fracs.max_val <= 1.0
 
         d = pipeline.stats_dict()
         assert "pipeline/mean_tissue_fraction" in d
@@ -514,7 +513,7 @@ class TestPipelineStats:
         assert sum(stats.magnification_counts.values()) == yielded
 
         # Tissue fractions: one per successfully processed slide
-        assert len(stats.tissue_fractions) == stats.slides_processed
+        assert stats.tissue_fractions.count == stats.slides_processed
 
         # Metadata counts: cancer + sample type each sum to slides_processed
         # (only when slides have parseable TCGA barcodes)

@@ -11,7 +11,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader, IterableDataset
 
-from tests.conftest import FakeBackend
+from tests.conftest import FakeBackend, fake_slide_paths
 from wsistream.filters.base import PatchFilter
 from wsistream.pipeline import PatchPipeline, PipelineStats
 from wsistream.sampling.random import RandomSampler
@@ -27,13 +27,9 @@ from wsistream.transforms.base import PatchTransform
 # ── helpers ──
 
 
-def _fake_paths(n: int) -> list[str]:
-    return [f"slide_{i}.svs" for i in range(n)]
-
-
 def _make_pipeline(n_slides=3, patches_per_slide=5, **kwargs) -> PatchPipeline:
     defaults = dict(
-        slide_paths=_fake_paths(n_slides),
+        slide_paths=fake_slide_paths(n_slides),
         backend=FakeBackend(),
         tissue_detector=OtsuTissueDetector(),
         sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
@@ -233,7 +229,7 @@ class TestRoundRobin:
 
 class TestSlideSampling:
     def test_random_slide_sampling_is_seeded(self):
-        slide_paths = _fake_paths(6)
+        slide_paths = fake_slide_paths(6)
 
         pipeline1 = _make_pipeline(
             n_slides=6,
@@ -404,7 +400,7 @@ class TestCleanup:
         """Breaking out of iteration must close all open slides."""
         backend = FakeBackend()
         pipeline = PatchPipeline(
-            slide_paths=_fake_paths(5),
+            slide_paths=fake_slide_paths(5),
             backend=backend,
             tissue_detector=OtsuTissueDetector(),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
@@ -436,7 +432,7 @@ class TestBackendCloning:
         """Backend constructor args must survive the prototype cloning."""
         backend = FakeBackend(token="secret")
         pipeline = PatchPipeline(
-            slide_paths=_fake_paths(1),
+            slide_paths=fake_slide_paths(1),
             backend=backend,
             tissue_detector=OtsuTissueDetector(),
             sampler=RandomSampler(patch_size=256, num_patches=1, seed=42),
@@ -465,7 +461,7 @@ class TestErrorHandling:
                 raise RuntimeError("disk on fire")
 
         pipeline = PatchPipeline(
-            slide_paths=_fake_paths(3),
+            slide_paths=fake_slide_paths(3),
             backend=_FailBackend(),
             tissue_detector=OtsuTissueDetector(),
             sampler=RandomSampler(patch_size=256, num_patches=5, seed=42),
@@ -484,7 +480,7 @@ class TestErrorHandling:
                 raise RuntimeError("broken")
 
         pipeline = PatchPipeline(
-            slide_paths=_fake_paths(3),
+            slide_paths=fake_slide_paths(3),
             backend=_FailBackend(),
             tissue_detector=OtsuTissueDetector(),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
@@ -511,7 +507,7 @@ class TestErrorHandling:
                 super().open(path)
 
         pipeline = PatchPipeline(
-            slide_paths=_fake_paths(3),
+            slide_paths=fake_slide_paths(3),
             backend=_FailOnSecond(),
             tissue_detector=OtsuTissueDetector(),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
@@ -541,7 +537,7 @@ class TestErrorHandling:
                 original_close(self)
 
         pipeline = PatchPipeline(
-            slide_paths=_fake_paths(2),
+            slide_paths=fake_slide_paths(2),
             backend=_TrackClose(),
             tissue_detector=_FailDetector(),
             sampler=RandomSampler(patch_size=256, num_patches=5, seed=42),
@@ -585,7 +581,7 @@ class TestCycleRngDiversity:
 
 class TestWorkerRngIsolation:
     def test_multi_worker_dataloader_uses_independent_rng_streams(self):
-        dataset = _WorkerProbeDataset(_fake_paths(4))
+        dataset = _WorkerProbeDataset(fake_slide_paths(4))
         loader = DataLoader(
             dataset,
             batch_size=None,

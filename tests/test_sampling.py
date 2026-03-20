@@ -259,9 +259,6 @@ class TestGridSampler:
 
     def test_partial_tissue(self, fake_slide, center_tissue_mask):
         sampler = GridSampler(patch_size=256, level=0, tissue_threshold=0.1)
-        all_coords = GridSampler(
-            patch_size=256, level=0, tissue_threshold=0.0
-        ).sample(fake_slide, center_tissue_mask)
         filtered = list(sampler.sample(fake_slide, center_tissue_mask))
         # Center tissue should yield fewer patches than full grid
         assert 0 < len(filtered) < 16 * 16

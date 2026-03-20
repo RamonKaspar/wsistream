@@ -10,7 +10,6 @@ Run:
 from __future__ import annotations
 
 from collections import Counter
-from pathlib import Path
 
 import pytest
 
@@ -312,7 +311,6 @@ class TestPipelineStats:
         for _ in pipeline:
             patch_count += 1
 
-        stats = pipeline.stats
         d = pipeline.stats_dict()
 
         assert d["pipeline/patches_extracted"] == patch_count
@@ -503,7 +501,6 @@ class TestPipelineStats:
             yielded += 1
 
         stats = pipeline.stats
-        d = pipeline.stats_dict()
 
         # Core counts
         assert stats.patches_extracted == yielded

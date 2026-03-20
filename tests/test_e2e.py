@@ -335,7 +335,7 @@ class TestPipelineStats:
 
         assert pipeline.stats.slides_processed == len(slides)
         assert pipeline.stats.slides_failed == 0
-        assert len(pipeline.stats.errors) == 0
+        assert pipeline.stats.error_count == 0
 
     def test_tissue_fractions_populated(self, slides, make_backend):
         """One tissue fraction per slide, all in [0, 1]."""

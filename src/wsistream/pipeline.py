@@ -69,7 +69,13 @@ class PipelineStats:
     magnification_counts: dict[float | None, int] = field(default_factory=dict)
     cancer_type_counts: dict[str, int] = field(default_factory=dict)
     sample_type_counts: dict[str, int] = field(default_factory=dict)
-    errors: list[tuple[str, str]] = field(default_factory=list)
+    recent_errors: deque = field(default_factory=lambda: deque(maxlen=100))
+    error_count: int = 0
+
+    def record_error(self, slide_path: str, message: str) -> None:
+        """Record an error, keeping only the most recent 100."""
+        self.recent_errors.append((slide_path, message))
+        self.error_count += 1
 
     def to_dict(self) -> dict:
         """Flat dict suitable for wandb.log() or similar."""
@@ -91,8 +97,8 @@ class PipelineStats:
         for st, count in self.sample_type_counts.items():
             safe = st.replace(" ", "_").lower()
             result[f"pipeline/sample_type/{safe}"] = count
-        if self.errors:
-            result["pipeline/error_count"] = len(self.errors)
+        if self.error_count > 0:
+            result["pipeline/error_count"] = self.error_count
         return result
 
 
@@ -259,7 +265,7 @@ class PatchPipeline:
                     )
                 except Exception as exc:
                     logger.warning("Error reading patch from %s: %s", coord.slide_path, exc)
-                    self._stats.errors.append((coord.slide_path, str(exc)))
+                    self._stats.record_error(coord.slide_path, str(exc))
                     entry.patch_count += 1
                     if entry.patch_count >= self.patches_per_slide:
                         self._close_entry(entry)
@@ -398,7 +404,7 @@ class PatchPipeline:
                 consecutive_failures = 0
             except Exception as exc:
                 self._stats.slides_failed += 1
-                self._stats.errors.append((slide_path, str(exc)))
+                self._stats.record_error(slide_path, str(exc))
                 logger.warning("Failed to open slide %s: %s", slide_path, exc)
                 consecutive_failures += 1
                 if consecutive_failures >= len(self.slide_paths):

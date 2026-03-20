@@ -155,7 +155,7 @@ class TestPipelineStats:
 
     def test_error_count(self):
         stats = PipelineStats()
-        stats.errors = [("slide.svs", "corrupt file")]
+        stats.record_error("slide.svs", "corrupt file")
         d = stats.to_dict()
         assert d["pipeline/error_count"] == 1
 

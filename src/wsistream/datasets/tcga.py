@@ -81,6 +81,7 @@ class TCGAAdapter(DatasetAdapter):
         slide_id = match.group(6)
 
         patient_id = f"TCGA-{tss}-{participant}"
+        barcode = f"TCGA-{tss}-{participant}-{sample_code}{vial}-{portion}-{slide_id}"
         sample_type = TCGA_SAMPLE_TYPES.get(sample_code, f"Unknown ({sample_code})")
 
         # DX = diagnostic (FFPE), TS/BS/MS = frozen sections
@@ -109,6 +110,6 @@ class TCGAAdapter(DatasetAdapter):
                 "slide_section": slide_section,
                 "is_frozen": is_frozen,
                 "sample_code": sample_code,
-                "barcode": filename,
+                "barcode": barcode,
             },
         )

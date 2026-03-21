@@ -31,6 +31,7 @@ class HEDColorAugmentation(PatchTransform):
 
     def __call__(self, image: np.ndarray) -> np.ndarray:
         from skimage.color import combine_stains, hed_from_rgb, rgb_from_hed, separate_stains
+
         img_float = np.clip(image.astype(np.float64) / 255.0, 1e-6, 1.0)
 
         hed = separate_stains(img_float, hed_from_rgb)

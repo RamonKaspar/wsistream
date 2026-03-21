@@ -60,9 +60,7 @@ class RandomSampler(PatchSampler):
             raise ValueError(f"max_retries must be >= 1, got {self.max_retries}")
         self._rng = np.random.default_rng(self.seed)
 
-    def sample(
-        self, slide: SlideHandle, tissue_mask: TissueMask
-    ) -> Iterator[PatchCoordinate]:
+    def sample(self, slide: SlideHandle, tissue_mask: TissueMask) -> Iterator[PatchCoordinate]:
         rng = self._rng
         props = slide.properties
 
@@ -105,7 +103,11 @@ class RandomSampler(PatchSampler):
                 break
 
             yield PatchCoordinate(
-                x=x, y=y, level=level,
-                patch_size=self.patch_size, mpp=mpp, slide_path=props.path,
+                x=x,
+                y=y,
+                level=level,
+                patch_size=self.patch_size,
+                mpp=mpp,
+                slide_path=props.path,
             )
             count += 1

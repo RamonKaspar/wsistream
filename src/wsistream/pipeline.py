@@ -29,7 +29,11 @@ from wsistream.tissue.base import TissueDetector
 from wsistream.tissue.otsu import OtsuTissueDetector
 from wsistream.transforms.base import PatchTransform
 from wsistream.types import (
-    PatchCoordinate, PatchResult, SlideMetadata, TissueMask, resolve_slide_paths,
+    PatchCoordinate,
+    PatchResult,
+    SlideMetadata,
+    TissueMask,
+    resolve_slide_paths,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,7 +109,14 @@ class PipelineStats:
 class _PoolEntry:
     """One active slide in the pool (internal)."""
 
-    __slots__ = ("slide", "sampler_iter", "tissue_mask", "metadata", "patch_count", "successful_reads")
+    __slots__ = (
+        "slide",
+        "sampler_iter",
+        "tissue_mask",
+        "metadata",
+        "patch_count",
+        "successful_reads",
+    )
 
     def __init__(
         self,
@@ -205,7 +216,7 @@ class PatchPipeline:
         self._rng = np.random.default_rng(base)
         # Reseed sampler and transforms with pipeline-controlled seeds
         # so that externally-created RNGs don't collide across workers.
-        if hasattr(self.sampler, '_rng'):
+        if hasattr(self.sampler, "_rng"):
             self.sampler._rng = np.random.default_rng((*base, 1))
         self._reseed_transform(self.transforms, base)
 
@@ -259,8 +270,10 @@ class PatchPipeline:
                 # Read patch from slide
                 try:
                     patch = entry.slide.read_region(
-                        x=coord.x, y=coord.y,
-                        width=coord.patch_size, height=coord.patch_size,
+                        x=coord.x,
+                        y=coord.y,
+                        width=coord.patch_size,
+                        height=coord.patch_size,
                         level=coord.level,
                     )
                 except Exception as exc:
@@ -305,7 +318,10 @@ class PatchPipeline:
                 ds = entry.slide.properties.level_downsamples[coord.level]
                 patch_l0 = int(coord.patch_size * ds)
                 tf = entry.tissue_mask.tissue_fraction_at(
-                    coord.x, coord.y, patch_l0, patch_l0,
+                    coord.x,
+                    coord.y,
+                    patch_l0,
+                    patch_l0,
                 )
 
                 # Update stats
@@ -316,8 +332,10 @@ class PatchPipeline:
                 )
 
                 yield PatchResult(
-                    image=patch, coordinate=coord,
-                    tissue_fraction=tf, slide_metadata=entry.metadata,
+                    image=patch,
+                    coordinate=coord,
+                    tissue_fraction=tf,
+                    slide_metadata=entry.metadata,
                 )
 
                 # Reached per-slide patch limit --> rotate this slide out
@@ -358,7 +376,7 @@ class PatchPipeline:
         base = (self.seed or 0, pid)
         self._rng = np.random.default_rng(base)
 
-        if hasattr(self.sampler, '_rng'):
+        if hasattr(self.sampler, "_rng"):
             self.sampler._rng = np.random.default_rng((*base, 1))
 
         self._reseed_transform(self.transforms, base)
@@ -367,11 +385,11 @@ class PatchPipeline:
     def _reseed_transform(transform: PatchTransform | None, base_seed) -> None:
         if transform is None:
             return
-        if hasattr(transform, '_rng'):
+        if hasattr(transform, "_rng"):
             transform._rng = np.random.default_rng((*base_seed, 2))
-        if hasattr(transform, 'transforms'):
+        if hasattr(transform, "transforms"):
             for i, t in enumerate(transform.transforms):
-                if hasattr(t, '_rng'):
+                if hasattr(t, "_rng"):
                     t._rng = np.random.default_rng((*base_seed, 3, i))
 
     def _fill_pool(self, pool: list[_PoolEntry], slide_queue: deque[str]) -> None:
@@ -433,7 +451,8 @@ class PatchPipeline:
 
             mask_arr = self.tissue_detector.detect(thumbnail, downsample=downsample_xy)
             tissue_mask = TissueMask(
-                mask=mask_arr, downsample=downsample_scalar,
+                mask=mask_arr,
+                downsample=downsample_scalar,
                 slide_dimensions=slide.properties.dimensions,
             )
             sampler_iter = iter(self.sampler.sample(slide, tissue_mask))
@@ -454,8 +473,10 @@ class PatchPipeline:
                     )
 
             return _PoolEntry(
-                slide=slide, sampler_iter=sampler_iter,
-                tissue_mask=tissue_mask, metadata=metadata,
+                slide=slide,
+                sampler_iter=sampler_iter,
+                tissue_mask=tissue_mask,
+                metadata=metadata,
             )
         except Exception:
             slide.close()

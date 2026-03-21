@@ -29,9 +29,7 @@ class GridSampler(PatchSampler):
         if self.stride is not None and self.stride < 1:
             raise ValueError(f"stride must be >= 1 or None, got {self.stride}")
 
-    def sample(
-        self, slide: SlideHandle, tissue_mask: TissueMask
-    ) -> Iterator[PatchCoordinate]:
+    def sample(self, slide: SlideHandle, tissue_mask: TissueMask) -> Iterator[PatchCoordinate]:
         props = slide.properties
         if self.level < 0 or self.level >= props.level_count:
             raise ValueError(
@@ -48,6 +46,10 @@ class GridSampler(PatchSampler):
             for x in range(0, props.width - patch_l0 + 1, stride_l0):
                 if tissue_mask.contains_tissue(x, y, patch_l0, patch_l0, self.tissue_threshold):
                     yield PatchCoordinate(
-                        x=x, y=y, level=self.level,
-                        patch_size=self.patch_size, mpp=mpp, slide_path=props.path,
+                        x=x,
+                        y=y,
+                        level=self.level,
+                        patch_size=self.patch_size,
+                        mpp=mpp,
+                        slide_path=props.path,
                     )

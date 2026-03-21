@@ -12,17 +12,13 @@ class TestPlotTissueMask:
         assert overlay.dtype == np.uint8
 
     def test_custom_color(self, white_thumbnail, sample_mask):
-        overlay = plot_tissue_mask(
-            white_thumbnail, sample_mask, color=(255, 0, 0)
-        )
+        overlay = plot_tissue_mask(white_thumbnail, sample_mask, color=(255, 0, 0))
         assert overlay.shape == (100, 100, 3)
 
 
 class TestPlotPatchGrid:
     def test_grid_layout(self):
-        patches = [
-            np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8) for _ in range(6)
-        ]
+        patches = [np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8) for _ in range(6)]
         grid = plot_patch_grid(patches, ncols=3)
         assert grid.ndim == 3
 

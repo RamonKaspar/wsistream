@@ -14,6 +14,7 @@ from wsistream.torch import WsiStreamDataset
 def _can_use_gloo() -> bool:
     try:
         import torch.distributed as dist
+
         return dist.is_available() and dist.is_gloo_available()
     except ImportError:
         return False

@@ -210,9 +210,7 @@ def query_tcga_slides(
     >>> download_tcga_slides(manifest, output_dir="/data/tcga")
     """
     if slide_type not in ("diagnostic", "frozen", "all"):
-        raise ValueError(
-            f"slide_type must be 'diagnostic', 'frozen', or 'all', got {slide_type!r}"
-        )
+        raise ValueError(f"slide_type must be 'diagnostic', 'frozen', or 'all', got {slide_type!r}")
 
     # Build GDC filter
     filter_content: list[dict] = [
@@ -225,11 +223,17 @@ def query_tcga_slides(
             cancer_types = [cancer_types]
         if len(cancer_types) == 1:
             filter_content.append(
-                {"op": "=", "content": {"field": "cases.project.project_id", "value": cancer_types[0]}}
+                {
+                    "op": "=",
+                    "content": {"field": "cases.project.project_id", "value": cancer_types[0]},
+                }
             )
         else:
             filter_content.append(
-                {"op": "in", "content": {"field": "cases.project.project_id", "value": cancer_types}}
+                {
+                    "op": "in",
+                    "content": {"field": "cases.project.project_id", "value": cancer_types},
+                }
             )
 
     if slide_type != "all":
@@ -240,7 +244,11 @@ def query_tcga_slides(
 
     filters = {"op": "and", "content": filter_content}
     fields = [
-        "file_id", "file_name", "file_size", "md5sum", "state",
+        "file_id",
+        "file_name",
+        "file_size",
+        "md5sum",
+        "state",
         "cases.project.project_id",
     ]
 
@@ -256,14 +264,16 @@ def query_tcga_slides(
     for hit in raw_hits:
         cases = hit.get("cases", [{}])
         project = cases[0].get("project", {}).get("project_id", "unknown") if cases else "unknown"
-        records.append({
-            "file_id": hit["file_id"],
-            "filename": hit["file_name"],
-            "file_size": hit["file_size"],
-            "cancer_type": project,
-            "md5sum": hit.get("md5sum", ""),
-            "state": hit.get("state", ""),
-        })
+        records.append(
+            {
+                "file_id": hit["file_id"],
+                "filename": hit["file_name"],
+                "file_size": hit["file_size"],
+                "cancer_type": project,
+                "md5sum": hit.get("md5sum", ""),
+                "state": hit.get("state", ""),
+            }
+        )
 
     # Stratified subsampling
     if max_per_cancer_type is not None:
@@ -289,12 +299,12 @@ def query_tcga_slides(
     for rec in records:
         by_type.setdefault(rec["cancer_type"], []).append(rec)
     total_bytes = sum(r["file_size"] for r in records)
-    total_gb = total_bytes / (1024 ** 3)
+    total_gb = total_bytes / (1024**3)
 
     summary_lines = [f"Found {len(records)} slides ({total_gb:.1f} GB):"]
     for ct in sorted(by_type):
         group = by_type[ct]
-        gb = sum(r["file_size"] for r in group) / (1024 ** 3)
+        gb = sum(r["file_size"] for r in group) / (1024**3)
         summary_lines.append(f"  {ct}: {len(group)} slides ({gb:.1f} GB)")
     logger.info("\n".join(summary_lines))
 
@@ -311,7 +321,9 @@ def _resolve_dest_path(rec: dict, output_dir: Path, organize_by: str) -> Path:
 
 
 def _download_one(
-    rec: dict, dest_path: Path, chunk_size: int,
+    rec: dict,
+    dest_path: Path,
+    chunk_size: int,
 ) -> Path:
     """Download a single file from GDC. Returns the final path."""
     import requests
@@ -398,7 +410,9 @@ def download_tcga_slides(
     total_bytes = sum(rec["file_size"] for rec, _ in to_download)
     logger.info(
         "Downloading %d slides (%.1f GB) with %d threads...",
-        len(to_download), total_bytes / (1024 ** 3), max_workers,
+        len(to_download),
+        total_bytes / (1024**3),
+        max_workers,
     )
 
     from tqdm import tqdm
@@ -413,10 +427,7 @@ def download_tcga_slides(
         return result
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        future_to_rec = {
-            pool.submit(_task, rec, dest_path): rec
-            for rec, dest_path in to_download
-        }
+        future_to_rec = {pool.submit(_task, rec, dest_path): rec for rec, dest_path in to_download}
         for future in as_completed(future_to_rec):
             rec = future_to_rec[future]
             try:

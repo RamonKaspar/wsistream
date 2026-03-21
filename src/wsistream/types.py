@@ -24,9 +24,7 @@ def resolve_slide_paths(slide_paths: str | Path | list[str | Path]) -> list[str]
     for entry in slide_paths:
         p = Path(entry)
         if p.is_dir():
-            found = sorted(
-                str(f) for f in p.rglob("*") if f.suffix.lower() in WSI_EXTENSIONS
-            )
+            found = sorted(str(f) for f in p.rglob("*") if f.suffix.lower() in WSI_EXTENSIONS)
             if not found:
                 raise FileNotFoundError(f"No WSI files found in {p}")
             resolved.extend(found)
@@ -125,7 +123,8 @@ class SlideMetadata:
     def to_flat_dict(self) -> dict[str, str]:
         """Return a flat dict of strings suitable for batched collation."""
         return {
-            f.name: json.dumps(getattr(self, f.name)) if f.name == "extra"
+            f.name: json.dumps(getattr(self, f.name))
+            if f.name == "extra"
             else (getattr(self, f.name) or "")
             for f in fields(self)
         }
@@ -133,10 +132,7 @@ class SlideMetadata:
     @classmethod
     def empty_dict(cls) -> dict[str, str]:
         """Return a flat dict with empty defaults for every field."""
-        return {
-            f.name: "{}" if f.name == "extra" else ""
-            for f in fields(cls)
-        }
+        return {f.name: "{}" if f.name == "extra" else "" for f in fields(cls)}
 
 
 @dataclass(frozen=True)

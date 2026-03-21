@@ -91,7 +91,6 @@ class TestPartitionSlidesByRank:
         assert partition_slides_by_rank(slides) == slides
 
 
-
 # ── WsiStreamDataset basic iteration ──
 
 
@@ -145,7 +144,9 @@ class TestWsiStreamDatasetIteration:
 
     def test_metadata_populated_with_adapter(self):
         dataset = _make_dataset(
-            n_slides=1, patches_per_slide=2, dataset_adapter=_FakeAdapter(),
+            n_slides=1,
+            patches_per_slide=2,
+            dataset_adapter=_FakeAdapter(),
         )
         for item in dataset:
             assert item["patient_id"] == "P001"
@@ -166,7 +167,9 @@ class TestDataLoaderCollation:
 
     def test_collation_with_adapter(self):
         dataset = _make_dataset(
-            n_slides=2, patches_per_slide=4, dataset_adapter=_FakeAdapter(),
+            n_slides=2,
+            patches_per_slide=4,
+            dataset_adapter=_FakeAdapter(),
         )
         loader = DataLoader(dataset, batch_size=4, num_workers=0)
         batch = next(iter(loader))
@@ -188,7 +191,9 @@ class TestSharedStats:
 
     def test_stats_with_filter_rejection(self):
         dataset = _make_dataset(
-            n_slides=1, patches_per_slide=10, patch_filter=_RejectAll(),
+            n_slides=1,
+            patches_per_slide=10,
+            patch_filter=_RejectAll(),
         )
         list(dataset)
         stats = dataset.stats_dict()

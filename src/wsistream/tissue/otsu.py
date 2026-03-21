@@ -7,8 +7,8 @@ component removal.
 
 Converts the thumbnail to grayscale, applies Gaussian blur, and uses
 Otsu's method to separate tissue (dark) from background (white); inverted, since
-tissue is darker than background. Optionally applies morphological closing and 
-removes small connected components. 
+tissue is darker than background. Optionally applies morphological closing and
+removes small connected components.
 
 Not the same as CLAM's tissue detection, which thresholds HSV saturation.
 For CLAM-matching behavior, use ``CLAMTissueDetector``.

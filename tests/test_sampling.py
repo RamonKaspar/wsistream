@@ -63,9 +63,7 @@ class TestRandomSampler:
 
     def test_respects_tissue_mask(self, fake_slide, no_tissue_mask):
         """No tissue → sampler gives up after max_retries."""
-        sampler = RandomSampler(
-            patch_size=256, num_patches=10, max_retries=5, seed=42
-        )
+        sampler = RandomSampler(patch_size=256, num_patches=10, max_retries=5, seed=42)
         coords = list(sampler.sample(fake_slide, no_tissue_mask))
         assert len(coords) == 0
 
@@ -79,15 +77,20 @@ class TestRandomSampler:
         def tiny_props():
             p = original()
             return SlideProperties(
-                path=p.path, dimensions=(100, 100), level_count=1,
-                level_dimensions=((100, 100),), level_downsamples=(1.0,),
-                mpp=0.25, vendor="fake",
+                path=p.path,
+                dimensions=(100, 100),
+                level_count=1,
+                level_dimensions=((100, 100),),
+                level_downsamples=(1.0,),
+                mpp=0.25,
+                vendor="fake",
             )
 
         fake_backend.get_properties = tiny_props
         slide = SlideHandle("tiny.svs", backend=fake_backend)
         mask = TissueMask(
-            mask=np.ones((10, 10), dtype=bool), downsample=10.0,
+            mask=np.ones((10, 10), dtype=bool),
+            downsample=10.0,
             slide_dimensions=(100, 100),
         )
 
@@ -105,15 +108,20 @@ class TestRandomSampler:
         def exact_props():
             p = original()
             return SlideProperties(
-                path=p.path, dimensions=(256, 256), level_count=1,
-                level_dimensions=((256, 256),), level_downsamples=(1.0,),
-                mpp=0.25, vendor="fake",
+                path=p.path,
+                dimensions=(256, 256),
+                level_count=1,
+                level_dimensions=((256, 256),),
+                level_downsamples=(1.0,),
+                mpp=0.25,
+                vendor="fake",
             )
 
         fake_backend.get_properties = exact_props
         slide = SlideHandle("exact.svs", backend=fake_backend)
         mask = TissueMask(
-            mask=np.ones((10, 10), dtype=bool), downsample=25.6,
+            mask=np.ones((10, 10), dtype=bool),
+            downsample=25.6,
             slide_dimensions=(256, 256),
         )
 
@@ -164,7 +172,10 @@ class TestRandomSampler:
     def test_target_mpp_selects_correct_level(self, fake_slide, full_tissue_mask):
         """target_mpp=0.5 should select level 1 (mpp=0.25*2.0=0.5)."""
         sampler = RandomSampler(
-            patch_size=256, num_patches=5, target_mpp=0.5, seed=42,
+            patch_size=256,
+            num_patches=5,
+            target_mpp=0.5,
+            seed=42,
         )
         coords = list(sampler.sample(fake_slide, full_tissue_mask))
         assert len(coords) == 5
@@ -175,7 +186,10 @@ class TestRandomSampler:
     def test_target_mpp_selects_highest_level(self, fake_slide, full_tissue_mask):
         """target_mpp=1.0 should select level 2 (mpp=0.25*4.0=1.0)."""
         sampler = RandomSampler(
-            patch_size=256, num_patches=5, target_mpp=1.0, seed=42,
+            patch_size=256,
+            num_patches=5,
+            target_mpp=1.0,
+            seed=42,
         )
         coords = list(sampler.sample(fake_slide, full_tissue_mask))
         assert len(coords) == 5
@@ -186,7 +200,11 @@ class TestRandomSampler:
     def test_target_mpp_overrides_level(self, fake_slide, full_tissue_mask):
         """When target_mpp is set, the level parameter is ignored."""
         sampler = RandomSampler(
-            patch_size=256, num_patches=3, level=0, target_mpp=0.5, seed=42,
+            patch_size=256,
+            num_patches=3,
+            level=0,
+            target_mpp=0.5,
+            seed=42,
         )
         coords = list(sampler.sample(fake_slide, full_tissue_mask))
         for c in coords:
@@ -195,7 +213,10 @@ class TestRandomSampler:
     def test_target_mpp_closest_match(self, fake_slide, full_tissue_mask):
         """target_mpp=0.6 should pick level 1 (mpp=0.5), not level 2 (mpp=1.0)."""
         sampler = RandomSampler(
-            patch_size=256, num_patches=3, target_mpp=0.6, seed=42,
+            patch_size=256,
+            num_patches=3,
+            target_mpp=0.6,
+            seed=42,
         )
         coords = list(sampler.sample(fake_slide, full_tissue_mask))
         for c in coords:
@@ -210,18 +231,23 @@ class TestRandomSampler:
         def no_mpp_props():
             p = original()
             return SlideProperties(
-                path=p.path, dimensions=p.dimensions,
+                path=p.path,
+                dimensions=p.dimensions,
                 level_count=p.level_count,
                 level_dimensions=p.level_dimensions,
                 level_downsamples=p.level_downsamples,
-                mpp=None, vendor=p.vendor,
+                mpp=None,
+                vendor=p.vendor,
             )
 
         fake_backend.get_properties = no_mpp_props
         slide = SlideHandle("no_mpp.svs", backend=fake_backend)
 
         sampler = RandomSampler(
-            patch_size=256, num_patches=3, target_mpp=0.5, seed=42,
+            patch_size=256,
+            num_patches=3,
+            target_mpp=0.5,
+            seed=42,
         )
         coords = list(sampler.sample(slide, full_tissue_mask))
         assert len(coords) == 3
@@ -284,7 +310,9 @@ class TestMultiMagnificationSampler:
     def test_samples_from_multiple_levels(self, fake_slide, full_tissue_mask):
         sampler = MultiMagnificationSampler(
             target_mpps=[0.25, 0.5, 1.0],
-            patch_size=256, num_patches=30, seed=42,
+            patch_size=256,
+            num_patches=30,
+            seed=42,
         )
         levels = Counter()
         for coord in sampler.sample(fake_slide, full_tissue_mask):
@@ -294,15 +322,19 @@ class TestMultiMagnificationSampler:
 
     def test_respects_count(self, fake_slide, full_tissue_mask):
         sampler = MultiMagnificationSampler(
-            target_mpps=[0.25, 0.5], num_patches=15, seed=42,
+            target_mpps=[0.25, 0.5],
+            num_patches=15,
+            seed=42,
         )
         coords = list(sampler.sample(fake_slide, full_tissue_mask))
         assert len(coords) == 15
 
     def test_no_tissue_stops(self, fake_slide, no_tissue_mask):
         sampler = MultiMagnificationSampler(
-            target_mpps=[0.25], num_patches=10,
-            max_consecutive_failures=5, seed=42,
+            target_mpps=[0.25],
+            num_patches=10,
+            max_consecutive_failures=5,
+            seed=42,
         )
         coords = list(sampler.sample(fake_slide, no_tissue_mask))
         assert len(coords) == 0
@@ -316,18 +348,22 @@ class TestMultiMagnificationSampler:
         def no_mpp_props():
             p = original()
             return SlideProperties(
-                path=p.path, dimensions=p.dimensions,
+                path=p.path,
+                dimensions=p.dimensions,
                 level_count=p.level_count,
                 level_dimensions=p.level_dimensions,
                 level_downsamples=p.level_downsamples,
-                mpp=None, vendor=p.vendor,
+                mpp=None,
+                vendor=p.vendor,
             )
 
         fake_backend.get_properties = no_mpp_props
         slide = SlideHandle("no_mpp.svs", backend=fake_backend)
 
         sampler = MultiMagnificationSampler(
-            target_mpps=[0.25, 0.5], num_patches=5, seed=42,
+            target_mpps=[0.25, 0.5],
+            num_patches=5,
+            seed=42,
         )
         coords = list(sampler.sample(slide, full_tissue_mask))
         assert len(coords) == 5
@@ -340,7 +376,8 @@ class TestMultiMagnificationSampler:
         sampler = MultiMagnificationSampler(
             target_mpps=[0.25, 1.0],
             mpp_weights=[0.99, 0.01],
-            num_patches=50, seed=42,
+            num_patches=50,
+            seed=42,
         )
         levels = Counter()
         for coord in sampler.sample(fake_slide, full_tissue_mask):

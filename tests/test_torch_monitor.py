@@ -14,6 +14,7 @@ from wsistream.torch import MonitoredLoader, WsiStreamDataset
 
 def _make_dataset(n_slides=4, patches_per_slide=10, cycle=True):
     from tests.conftest import fake_slide_paths
+
     return WsiStreamDataset(
         slide_paths=fake_slide_paths(n_slides),
         backend=FakeBackend(),

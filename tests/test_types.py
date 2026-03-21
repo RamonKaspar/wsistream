@@ -61,9 +61,7 @@ class TestSlideProperties:
 
 class TestPatchCoordinate:
     def test_fields(self):
-        pc = PatchCoordinate(
-            x=100, y=200, level=0, patch_size=256, mpp=0.5, slide_path="t.svs"
-        )
+        pc = PatchCoordinate(x=100, y=200, level=0, patch_size=256, mpp=0.5, slide_path="t.svs")
         assert pc.x == 100
         assert pc.y == 200
         assert pc.mpp == 0.5
@@ -71,8 +69,6 @@ class TestPatchCoordinate:
     def test_frozen(self):
         import pytest
 
-        pc = PatchCoordinate(
-            x=100, y=200, level=0, patch_size=256, mpp=0.5, slide_path="t.svs"
-        )
+        pc = PatchCoordinate(x=100, y=200, level=0, patch_size=256, mpp=0.5, slide_path="t.svs")
         with pytest.raises(AttributeError):
             pc.x = 999

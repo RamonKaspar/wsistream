@@ -19,7 +19,7 @@ representations define the same tissue regions.
 
 References
 ----------
-Lu et al., "Data Efficient and Weakly Supervised Computational Pathology 
+Lu et al., "Data Efficient and Weakly Supervised Computational Pathology
 on Whole Slide Images", Nature BME, 2021. DOI: 10.1038/s41551-020-00682-w
 """
 
@@ -96,24 +96,18 @@ class CLAMTissueDetector(TissueDetector):
                 img_med, 0, self.sthresh_up, cv2.THRESH_OTSU + cv2.THRESH_BINARY
             )
         else:
-            _, img_otsu = cv2.threshold(
-                img_med, self.sthresh, self.sthresh_up, cv2.THRESH_BINARY
-            )
+            _, img_otsu = cv2.threshold(img_med, self.sthresh, self.sthresh_up, cv2.THRESH_BINARY)
 
         if self.close > 0:
             kernel = np.ones((self.close, self.close), np.uint8)
             img_otsu = cv2.morphologyEx(img_otsu, cv2.MORPH_CLOSE, kernel)
 
         # Scale area thresholds by reference patch area at this downsample
-        scaled_ref_patch_area = int(
-            self.ref_patch_size ** 2 / (downsample[0] * downsample[1])
-        )
+        scaled_ref_patch_area = int(self.ref_patch_size**2 / (downsample[0] * downsample[1]))
         scaled_a_t = self.a_t * scaled_ref_patch_area
         scaled_a_h = self.a_h * scaled_ref_patch_area
 
-        contours, hierarchy = cv2.findContours(
-            img_otsu, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE
-        )
+        contours, hierarchy = cv2.findContours(img_otsu, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
 
         if not contours or hierarchy is None:
             return img_otsu > 0
@@ -146,7 +140,7 @@ class CLAMTissueDetector(TissueDetector):
         for hole_ids in all_holes:
             unfiltered_holes = [contours[idx] for idx in hole_ids]
             unfiltered_holes = sorted(unfiltered_holes, key=cv2.contourArea, reverse=True)
-            unfiltered_holes = unfiltered_holes[:self.max_n_holes]
+            unfiltered_holes = unfiltered_holes[: self.max_n_holes]
 
             filtered_holes = []
             for hole in unfiltered_holes:

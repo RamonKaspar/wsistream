@@ -71,9 +71,7 @@ class MultiMagnificationSampler(PatchSampler):
             raise ValueError(f"num_patches must be -1 (infinite) or >= 1, got {self.num_patches}")
         self._rng = np.random.default_rng(self.seed)
 
-    def sample(
-        self, slide: SlideHandle, tissue_mask: TissueMask
-    ) -> Iterator[PatchCoordinate]:
+    def sample(self, slide: SlideHandle, tissue_mask: TissueMask) -> Iterator[PatchCoordinate]:
         rng = self._rng
 
         if slide.properties.mpp is None:
@@ -82,11 +80,13 @@ class MultiMagnificationSampler(PatchSampler):
             # calls (e.g. cycle mode) produce different coordinates.
             logger.warning(
                 "Slide %s has no MPP metadata; falling back to level-0 random sampling",
-                slide.properties.path if hasattr(slide.properties, 'path') else "unknown",
+                slide.properties.path if hasattr(slide.properties, "path") else "unknown",
             )
             inner = RandomSampler(
-                patch_size=self.patch_size, num_patches=self.num_patches,
-                level=0, tissue_threshold=self.tissue_threshold,
+                patch_size=self.patch_size,
+                num_patches=self.num_patches,
+                level=0,
+                tissue_threshold=self.tissue_threshold,
                 seed=int(rng.integers(0, 2**31)),
             )
             yield from inner.sample(slide, tissue_mask)
@@ -108,7 +108,9 @@ class MultiMagnificationSampler(PatchSampler):
             level = slide.best_level_for_mpp(self.target_mpps[idx])
 
             inner = RandomSampler(
-                patch_size=self.patch_size, num_patches=1, level=level,
+                patch_size=self.patch_size,
+                num_patches=1,
+                level=level,
                 tissue_threshold=self.tissue_threshold,
                 seed=int(rng.integers(0, 2**31)),
             )

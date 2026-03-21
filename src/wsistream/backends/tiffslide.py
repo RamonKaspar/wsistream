@@ -50,14 +50,10 @@ class TiffSlideBackend(SlideBackend):
         # TiffSlide v3+ uses "tiffslide.*" property keys, not "openslide.*".
         # Fall back to openslide keys for older versions or slides opened
         # via openslide-compatible property dicts.
-        mpp = (
-            self._safe_float(s.properties.get("tiffslide.mpp-x"))
-            or self._safe_float(s.properties.get("openslide.mpp-x"))
+        mpp = self._safe_float(s.properties.get("tiffslide.mpp-x")) or self._safe_float(
+            s.properties.get("openslide.mpp-x")
         )
-        vendor = (
-            s.properties.get("tiffslide.vendor")
-            or s.properties.get("openslide.vendor")
-        )
+        vendor = s.properties.get("tiffslide.vendor") or s.properties.get("openslide.vendor")
         return SlideProperties(
             path=self._path,
             dimensions=s.dimensions,

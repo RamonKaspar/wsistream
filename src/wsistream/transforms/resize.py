@@ -20,4 +20,6 @@ class ResizeTransform(PatchTransform):
     def __call__(self, image: np.ndarray) -> np.ndarray:
         if image.shape[0] == self.target_size and image.shape[1] == self.target_size:
             return image
-        return cv2.resize(image, (self.target_size, self.target_size), interpolation=self.interpolation)
+        return cv2.resize(
+            image, (self.target_size, self.target_size), interpolation=self.interpolation
+        )

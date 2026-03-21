@@ -60,9 +60,7 @@ def partition_slides_by_rank(
             f"Rank {rank} got 0 slides ({len(slide_paths)} slides / {world_size} ranks). "
             f"Need at least as many slides as ranks."
         )
-    logger.info(
-        "Rank %d/%d: %d/%d slides", rank, world_size, len(slides), len(slide_paths)
-    )
+    logger.info("Rank %d/%d: %d/%d slides", rank, world_size, len(slides), len(slide_paths))
     return slides
 
 
@@ -260,11 +258,15 @@ class WsiStreamDataset(IterableDataset):
             worker_seed = base + self._iter_count
             logger.debug(
                 "Worker %d/%d: %d slides",
-                worker_info.id, worker_info.num_workers, len(slides),
+                worker_info.id,
+                worker_info.num_workers,
+                len(slides),
             )
         else:
             slides = self._slide_paths
-            worker_seed = (self._seed or 0) + self._iter_count if self._seed is not None else self._iter_count
+            worker_seed = (
+                (self._seed or 0) + self._iter_count if self._seed is not None else self._iter_count
+            )
 
         if not slides:
             logger.warning("Worker got 0 slides, yielding nothing")
@@ -300,7 +302,10 @@ class WsiStreamDataset(IterableDataset):
             self._flush_stats(pipeline, prev, use_queue)
 
     def _flush_stats(
-        self, pipeline: PatchPipeline, prev: _StatsDelta, use_queue: bool,
+        self,
+        pipeline: PatchPipeline,
+        prev: _StatsDelta,
+        use_queue: bool,
     ) -> None:
         """Compute delta from raw pipeline stats and send to aggregator."""
         s = pipeline.stats
@@ -367,16 +372,18 @@ class WsiStreamDataset(IterableDataset):
         item = meta.to_flat_dict() if meta else SlideMetadata.empty_dict()
 
         # Coordinate fields overwrite — these are authoritative
-        item.update({
-            "image": tensor,
-            "x": coord.x,
-            "y": coord.y,
-            "level": coord.level,
-            "patch_size": coord.patch_size,
-            "slide_path": coord.slide_path,
-            "mpp": coord.mpp if coord.mpp is not None else -1.0,
-            "tissue_fraction": result.tissue_fraction,
-        })
+        item.update(
+            {
+                "image": tensor,
+                "x": coord.x,
+                "y": coord.y,
+                "level": coord.level,
+                "patch_size": coord.patch_size,
+                "slide_path": coord.slide_path,
+                "mpp": coord.mpp if coord.mpp is not None else -1.0,
+                "tissue_fraction": result.tissue_fraction,
+            }
+        )
         return item
 
 

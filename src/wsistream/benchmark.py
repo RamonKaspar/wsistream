@@ -63,6 +63,7 @@ def _configure_threads() -> dict[str, str]:
     torch.set_num_threads(1)
     try:
         import cv2
+
         cv2.setNumThreads(1)
     except ImportError:
         pass
@@ -229,12 +230,22 @@ def _run_config(
             torch_mp.spawn(
                 _benchmark_worker,
                 args=(
-                    world_size, port, tmp_dir,
-                    make_dataset, slide_paths,
-                    num_workers, pool_size, patches_per_slide,
-                    batch_size, warmup_batches, measure_batches,
-                    prefetch_factor, persistent_workers, pin_memory,
-                    multiprocessing_context, seed,
+                    world_size,
+                    port,
+                    tmp_dir,
+                    make_dataset,
+                    slide_paths,
+                    num_workers,
+                    pool_size,
+                    patches_per_slide,
+                    batch_size,
+                    warmup_batches,
+                    measure_batches,
+                    prefetch_factor,
+                    persistent_workers,
+                    pin_memory,
+                    multiprocessing_context,
+                    seed,
                 ),
                 nprocs=world_size,
                 join=True,
@@ -345,9 +356,14 @@ def benchmark_throughput(
     pool_size_list = _ensure_list(pool_size)
     pps_list = _ensure_list(patches_per_slide)
 
-    configs = list(itertools.product(
-        world_size_list, num_workers_list, pool_size_list, pps_list,
-    ))
+    configs = list(
+        itertools.product(
+            world_size_list,
+            num_workers_list,
+            pool_size_list,
+            pps_list,
+        )
+    )
 
     # Pin thread pools before any measurement
     thread_settings = _configure_threads()
@@ -355,8 +371,10 @@ def benchmark_throughput(
     if verbose:
         print(f"Slides: {len(slide_paths)}")
         print(f"Thread settings: {thread_settings}")
-        print(f"Batch size: {batch_size}, "
-              f"Warmup: {warmup_batches} batches, Measure: {measure_batches} batches")
+        print(
+            f"Batch size: {batch_size}, "
+            f"Warmup: {warmup_batches} batches, Measure: {measure_batches} batches"
+        )
         print(f"Testing {len(configs)} configuration(s)\n")
 
     # Check for DDP pickle safety upfront
@@ -398,8 +416,10 @@ def benchmark_throughput(
     for ws, nw, ps, pps in configs:
         if len(slide_paths) < ws:
             if verbose:
-                print(f"{'SKIP':>10}  {nw:>11}  {ps:>9}  {pps:>13}  "
-                      f"need >= {ws} slides (have {len(slide_paths)})")
+                print(
+                    f"{'SKIP':>10}  {nw:>11}  {ps:>9}  {pps:>13}  "
+                    f"need >= {ws} slides (have {len(slide_paths)})"
+                )
             continue
 
         total_workers = ws * nw
@@ -407,7 +427,11 @@ def benchmark_throughput(
             logger.warning(
                 "Oversubscription: world_size=%d x num_workers=%d = %d worker "
                 "processes but only %d CPU cores. Results may be bottlenecked "
-                "by context switching.", ws, nw, total_workers, cpu_count,
+                "by context switching.",
+                ws,
+                nw,
+                total_workers,
+                cpu_count,
             )
 
         try:
@@ -446,20 +470,23 @@ def benchmark_throughput(
 
     if not results:
         raise RuntimeError(
-            f"All {len(configs)} benchmark configuration(s) failed. "
-            f"Check the logs for details."
+            f"All {len(configs)} benchmark configuration(s) failed. " f"Check the logs for details."
         )
 
     if verbose:
         best = max(results, key=lambda r: r.effective_sync_throughput)
-        print(f"\nBest: world_size={best.world_size}, num_workers={best.num_workers}, "
-              f"pool_size={best.pool_size}, patches_per_slide={best.patches_per_slide} "
-              f"-> {best.effective_sync_throughput:.0f} effective patches/sec")
+        print(
+            f"\nBest: world_size={best.world_size}, num_workers={best.num_workers}, "
+            f"pool_size={best.pool_size}, patches_per_slide={best.patches_per_slide} "
+            f"-> {best.effective_sync_throughput:.0f} effective patches/sec"
+        )
         print("\nPer-rank detail (best config):")
         for i, pps_val in enumerate(best.per_rank_patches_per_sec):
             p50 = float(np.median(best.per_rank_batch_times_ms[i]))
             p95 = float(np.percentile(best.per_rank_batch_times_ms[i], 95))
-            print(f"  rank {i}: {pps_val:.0f} patches/sec, "
-                  f"batch_time p50={p50:.1f}ms p95={p95:.1f}ms")
+            print(
+                f"  rank {i}: {pps_val:.0f} patches/sec, "
+                f"batch_time p50={p50:.1f}ms p95={p95:.1f}ms"
+            )
 
     return results

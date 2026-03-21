@@ -35,9 +35,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def _find_slides(slide_dir: str) -> list[str]:
     from wsistream.types import WSI_EXTENSIONS
-    return sorted(
-        str(f) for f in Path(slide_dir).rglob("*") if f.suffix.lower() in WSI_EXTENSIONS
-    )
+
+    return sorted(str(f) for f in Path(slide_dir).rglob("*") if f.suffix.lower() in WSI_EXTENSIONS)
 
 
 @pytest.fixture(scope="session")
@@ -106,9 +105,7 @@ class FakeBackend(SlideBackend):
     def close(self) -> None:
         self._closed = True
 
-    def read_region(
-        self, x: int, y: int, level: int, width: int, height: int
-    ) -> np.ndarray:
+    def read_region(self, x: int, y: int, level: int, width: int, height: int) -> np.ndarray:
         return np.full((height, width, 3), 128, dtype=np.uint8)
 
     def get_thumbnail(self, size: tuple[int, int]) -> np.ndarray:

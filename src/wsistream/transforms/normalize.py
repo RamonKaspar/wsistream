@@ -31,8 +31,7 @@ class NormalizeTransform(PatchTransform):
     ) -> None:
         if len(mean) != 3 or len(std) != 3:
             raise ValueError(
-                f"mean and std must be 3-element tuples (RGB), "
-                f"got mean={mean}, std={std}"
+                f"mean and std must be 3-element tuples (RGB), " f"got mean={mean}, std={std}"
             )
         if any(s == 0 for s in std):
             raise ValueError(f"std contains zero which would cause division by zero: {std}")

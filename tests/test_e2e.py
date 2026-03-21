@@ -71,9 +71,7 @@ class TestSlideInterleaving:
         # With pool_size >= 2 and patches_per_slide=5, the first 10 patches
         # must include at least 2 different slides.
         first_10 = set(seen_slides[:10])
-        assert len(first_10) >= 2, (
-            f"First 10 patches all from same slide(s): {first_10}"
-        )
+        assert len(first_10) >= 2, f"First 10 patches all from same slide(s): {first_10}"
 
 
 class TestPatchesPerSlideCap:
@@ -96,9 +94,7 @@ class TestPatchesPerSlideCap:
             slide_counter[result.coordinate.slide_path] += 1
 
         max_from_one = max(slide_counter.values())
-        assert max_from_one <= cap, (
-            f"Slide exceeded cap: got {max_from_one}, limit is {cap}"
-        )
+        assert max_from_one <= cap, f"Slide exceeded cap: got {max_from_one}, limit is {cap}"
 
 
 class TestCycleMode:
@@ -125,9 +121,7 @@ class TestCycleMode:
             if count >= target:
                 break
 
-        assert count >= target, (
-            f"Cycle produced {count} patches, expected >= {target}"
-        )
+        assert count >= target, f"Cycle produced {count} patches, expected >= {target}"
 
     def test_revisits_slides(self, slides, make_backend):
         """With cycle=True, slides should be visited more than once."""
@@ -154,9 +148,9 @@ class TestCycleMode:
 
         # At least one slide should have been visited more than once
         max_visits = max(slide_counter.values())
-        assert max_visits > patches_per_slide, (
-            f"No slide was revisited (max patches from one slide: {max_visits})"
-        )
+        assert (
+            max_visits > patches_per_slide
+        ), f"No slide was revisited (max patches from one slide: {max_visits})"
 
 
 class TestFullMidnightPipeline:
@@ -170,11 +164,13 @@ class TestFullMidnightPipeline:
                 detectors=[OtsuTissueDetector(), HSVTissueDetector()],
             ),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
-            transforms=ComposeTransforms([
-                HEDColorAugmentation(sigma=0.05),
-                RandomFlipRotate(),
-                ResizeTransform(target_size=224),
-            ]),
+            transforms=ComposeTransforms(
+                [
+                    HEDColorAugmentation(sigma=0.05),
+                    RandomFlipRotate(),
+                    ResizeTransform(target_size=224),
+                ]
+            ),
             dataset_adapter=TCGAAdapter(),
             pool_size=min(4, len(slides)),
             patches_per_slide=5,
@@ -273,11 +269,13 @@ class TestPatchFilter:
                 min_pixel_fraction=0.6,
             ),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
-            transforms=ComposeTransforms([
-                HEDColorAugmentation(sigma=0.05),
-                RandomFlipRotate(),
-                ResizeTransform(target_size=224),
-            ]),
+            transforms=ComposeTransforms(
+                [
+                    HEDColorAugmentation(sigma=0.05),
+                    RandomFlipRotate(),
+                    ResizeTransform(target_size=224),
+                ]
+            ),
             dataset_adapter=TCGAAdapter(),
             pool_size=min(4, len(slides)),
             patches_per_slide=10,

@@ -15,9 +15,7 @@ class PatchSampler(ABC):
     """
 
     @abstractmethod
-    def sample(
-        self, slide: SlideHandle, tissue_mask: TissueMask
-    ) -> Iterator[PatchCoordinate]:
+    def sample(self, slide: SlideHandle, tissue_mask: TissueMask) -> Iterator[PatchCoordinate]:
         """
         Yield patch coordinates from a slide.
 

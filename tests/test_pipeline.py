@@ -283,7 +283,9 @@ class TestCycleMode:
         target = one_pass * 3
 
         pipeline = _make_pipeline(
-            n_slides=n_slides, patches_per_slide=pps, cycle=True,
+            n_slides=n_slides,
+            patches_per_slide=pps,
+            cycle=True,
         )
 
         count = 0
@@ -297,7 +299,9 @@ class TestCycleMode:
     def test_cycle_revisits_slides(self):
         n_slides, pps = 2, 3
         pipeline = _make_pipeline(
-            n_slides=n_slides, patches_per_slide=pps, cycle=True,
+            n_slides=n_slides,
+            patches_per_slide=pps,
+            cycle=True,
         )
 
         per_slide = Counter()
@@ -315,7 +319,10 @@ class TestCycleMode:
     def test_cycle_no_duplicate_pool_entries(self):
         """With pool_size > n_slides, should NOT open the same slide twice."""
         pipeline = _make_pipeline(
-            n_slides=2, patches_per_slide=5, pool_size=8, cycle=True,
+            n_slides=2,
+            patches_per_slide=5,
+            pool_size=8,
+            cycle=True,
         )
 
         count = 0
@@ -339,7 +346,8 @@ class TestCycleMode:
 class TestPatchFilter:
     def test_filter_rejects(self):
         pipeline = _make_pipeline(
-            n_slides=1, patches_per_slide=10,
+            n_slides=1,
+            patches_per_slide=10,
             patch_filter=_RejectAll(),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
         )
@@ -348,7 +356,8 @@ class TestPatchFilter:
 
     def test_filter_stats(self):
         pipeline = _make_pipeline(
-            n_slides=1, patches_per_slide=20,
+            n_slides=1,
+            patches_per_slide=20,
             patch_filter=_RejectAll(),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
         )
@@ -359,7 +368,9 @@ class TestPatchFilter:
     def test_reject_all_with_infinite_sampler_terminates(self):
         """Regression: all-reject filter + infinite sampler must NOT hang."""
         pipeline = _make_pipeline(
-            n_slides=2, patches_per_slide=10, cycle=False,
+            n_slides=2,
+            patches_per_slide=10,
+            cycle=False,
             patch_filter=_RejectAll(),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
         )
@@ -373,7 +384,9 @@ class TestTransformIntegration:
     def test_transforms_applied(self):
         counter = _CountTransform()
         pipeline = _make_pipeline(
-            n_slides=1, patches_per_slide=5, transforms=counter,
+            n_slides=1,
+            patches_per_slide=5,
+            transforms=counter,
         )
         list(pipeline)
         assert counter.call_count == 5
@@ -381,14 +394,17 @@ class TestTransformIntegration:
     def test_normalize_changes_dtype(self):
         norm = NormalizeTransform(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))
         pipeline = _make_pipeline(
-            n_slides=1, patches_per_slide=3, transforms=norm,
+            n_slides=1,
+            patches_per_slide=3,
+            transforms=norm,
         )
         for result in pipeline:
             assert result.image.dtype == np.float32
 
     def test_resize_changes_shape(self):
         pipeline = _make_pipeline(
-            n_slides=1, patches_per_slide=3,
+            n_slides=1,
+            patches_per_slide=3,
             transforms=ResizeTransform(target_size=224),
         )
         for result in pipeline:
@@ -557,7 +573,9 @@ class TestCycleRngDiversity:
     def test_revisited_slide_gets_different_patches(self):
         """Regression: cycling must NOT replay identical coordinates."""
         pipeline = _make_pipeline(
-            n_slides=1, patches_per_slide=5, cycle=True,
+            n_slides=1,
+            patches_per_slide=5,
+            cycle=True,
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
         )
 
@@ -565,18 +583,16 @@ class TestCycleRngDiversity:
         current_pass = 0
         count = 0
         for result in pipeline:
-            coords_by_pass[current_pass].append(
-                (result.coordinate.x, result.coordinate.y)
-            )
+            coords_by_pass[current_pass].append((result.coordinate.x, result.coordinate.y))
             count += 1
             if count == 5:
                 current_pass = 1
             if count == 10:
                 break
 
-        assert coords_by_pass[0] != coords_by_pass[1], (
-            "Second pass produced identical coordinates — RNG is being re-seeded"
-        )
+        assert (
+            coords_by_pass[0] != coords_by_pass[1]
+        ), "Second pass produced identical coordinates — RNG is being re-seeded"
 
 
 class TestWorkerRngIsolation:

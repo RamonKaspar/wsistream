@@ -16,9 +16,11 @@ def get_backend(name: str):
     """Instantiate the requested backend."""
     if name == "openslide":
         from wsistream.backends import OpenSlideBackend
+
         return OpenSlideBackend()
     elif name == "tiffslide":
         from wsistream.backends import TiffSlideBackend
+
         return TiffSlideBackend()
     else:
         raise ValueError(f"Unknown backend: {name!r}")
@@ -27,7 +29,12 @@ def get_backend(name: str):
 def demo_tissue_detection(slide_path: str, backend_name: str, output_dir: Path) -> None:
     """Compare tissue detection strategies."""
     from wsistream.slide import SlideHandle
-    from wsistream.tissue import CLAMTissueDetector, CombinedTissueDetector, HSVTissueDetector, OtsuTissueDetector
+    from wsistream.tissue import (
+        CLAMTissueDetector,
+        CombinedTissueDetector,
+        HSVTissueDetector,
+        OtsuTissueDetector,
+    )
     from wsistream.viz import plot_tissue_mask
 
     print("\n--- Tissue Detection ---")
@@ -42,7 +49,10 @@ def demo_tissue_detection(slide_path: str, backend_name: str, output_dir: Path) 
             ("Otsu", OtsuTissueDetector()),
             ("HSV", HSVTissueDetector()),
             ("CLAM", CLAMTissueDetector()),
-            ("Combined", CombinedTissueDetector(detectors=[OtsuTissueDetector(), HSVTissueDetector()])),
+            (
+                "Combined",
+                CombinedTissueDetector(detectors=[OtsuTissueDetector(), HSVTissueDetector()]),
+            ),
         ]:
             mask = det.detect(thumbnail, downsample=downsample)
             frac = mask.sum() / mask.size
@@ -80,9 +90,11 @@ def demo_patch_sampling(slide_path: str, backend_name: str, output_dir: Path) ->
         patches.append(result.image)
         coords.append(result.coordinate)
         if result.slide_metadata and not metadata_printed:
-            print(f"  Metadata: patient={result.slide_metadata.patient_id}, "
-                  f"cancer={result.slide_metadata.cancer_type}, "
-                  f"sample={result.slide_metadata.sample_type}")
+            print(
+                f"  Metadata: patient={result.slide_metadata.patient_id}, "
+                f"cancer={result.slide_metadata.cancer_type}, "
+                f"sample={result.slide_metadata.sample_type}"
+            )
             metadata_printed = True
 
     print(f"  Extracted {len(patches)} patches")
@@ -96,7 +108,9 @@ def demo_patch_sampling(slide_path: str, backend_name: str, output_dir: Path) ->
             thumbnail = slide.get_thumbnail((1024, 1024))
             dims = slide.properties.dimensions
         plot_sampling_locations(
-            thumbnail, coords, slide_dimensions=dims,
+            thumbnail,
+            coords,
+            slide_dimensions=dims,
             save_path=output_dir / "sampling_locations.png",
         )
 

@@ -18,8 +18,7 @@ class PatchTransform(ABC):
     """
 
     @abstractmethod
-    def __call__(self, image: np.ndarray) -> np.ndarray:
-        ...
+    def __call__(self, image: np.ndarray) -> np.ndarray: ...
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"

@@ -49,9 +49,9 @@ class TestHSVDetector:
     def test_custom_ranges(self):
         thumb = np.ones((50, 50, 3), dtype=np.uint8) * 240
         thumb[10:40, 10:40] = [180, 120, 180]
-        mask = HSVTissueDetector(
-            hue_range=(0, 179), sat_range=(1, 255), val_range=(1, 255)
-        ).detect(thumb)
+        mask = HSVTissueDetector(hue_range=(0, 179), sat_range=(1, 255), val_range=(1, 255)).detect(
+            thumb
+        )
         assert mask.dtype == bool
 
 
@@ -79,22 +79,16 @@ class TestCLAMDetector:
 
 class TestCombinedDetector:
     def test_intersection(self, white_thumbnail):
-        combined = CombinedTissueDetector(
-            detectors=[OtsuTissueDetector(), OtsuTissueDetector()]
-        )
+        combined = CombinedTissueDetector(detectors=[OtsuTissueDetector(), OtsuTissueDetector()])
         mask = combined.detect(white_thumbnail)
         assert mask[50, 50]
 
     def test_empty_raises(self):
         with pytest.raises(ValueError, match="at least one"):
-            CombinedTissueDetector(detectors=[]).detect(
-                np.zeros((10, 10, 3), dtype=np.uint8)
-            )
+            CombinedTissueDetector(detectors=[]).detect(np.zeros((10, 10, 3), dtype=np.uint8))
 
     def test_repr(self):
-        combined = CombinedTissueDetector(
-            detectors=[OtsuTissueDetector(), HSVTissueDetector()]
-        )
+        combined = CombinedTissueDetector(detectors=[OtsuTissueDetector(), HSVTissueDetector()])
         r = repr(combined)
         assert "OtsuTissueDetector" in r
         assert "HSVTissueDetector" in r

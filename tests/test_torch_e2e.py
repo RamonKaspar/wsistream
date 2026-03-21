@@ -62,9 +62,13 @@ class _NoMppBackend(FakeBackend):
     def get_properties(self) -> SlideProperties:
         props = super().get_properties()
         return SlideProperties(
-            path=props.path, dimensions=props.dimensions,
-            level_count=props.level_count, level_dimensions=props.level_dimensions,
-            level_downsamples=props.level_downsamples, mpp=None, vendor=props.vendor,
+            path=props.path,
+            dimensions=props.dimensions,
+            level_count=props.level_count,
+            level_dimensions=props.level_dimensions,
+            level_downsamples=props.level_downsamples,
+            mpp=None,
+            vendor=props.vendor,
         )
 
 
@@ -82,9 +86,13 @@ class _FakeAdapter(DatasetAdapter):
     def parse_metadata(self, slide_path: str) -> SlideMetadata:
         idx = slide_path.split("_")[1].split(".")[0] if "_" in slide_path else "0"
         return SlideMetadata(
-            slide_path=slide_path, dataset_name="test_dataset",
-            patient_id=f"P-{idx}", cancer_type="BRCA", tissue_type="breast",
-            sample_type="primary", extra={"source": "fake", "slide": slide_path},
+            slide_path=slide_path,
+            dataset_name="test_dataset",
+            patient_id=f"P-{idx}",
+            cancer_type="BRCA",
+            tissue_type="breast",
+            sample_type="primary",
+            extra={"source": "fake", "slide": slide_path},
         )
 
 
@@ -137,7 +145,8 @@ class TestStatsFlushing:
 
     def test_partial_slide_failure(self):
         dataset = _make_dataset(
-            n_slides=4, patches_per_slide=3,
+            n_slides=4,
+            patches_per_slide=3,
             backend=_FailOnSpecificSlides(["slide_1", "slide_3"]),
         )
         list(dataset)
@@ -152,6 +161,7 @@ class TestStatsFlushing:
         stats = dataset.stats_dict()
         assert stats["pipeline/slides_failed"] == 2
         assert stats["pipeline/patches_extracted"] == 0
+
 
 # ── Collation correctness (FakeBackend) ──
 
@@ -258,10 +268,13 @@ class TestSeedStress:
 class TestEdgeCases:
     def test_empty_slide_list(self):
         dataset = WsiStreamDataset(
-            slide_paths=[], backend=FakeBackend(),
+            slide_paths=[],
+            backend=FakeBackend(),
             tissue_detector=OtsuTissueDetector(),
             sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
-            pool_size=1, patches_per_slide=5, cycle=False,
+            pool_size=1,
+            patches_per_slide=5,
+            cycle=False,
         )
         assert len(list(dataset)) == 0
 
@@ -273,10 +286,14 @@ class TestEdgeCases:
     def test_all_expected_slides_appear(self):
         paths = fake_slide_paths(4)
         dataset = WsiStreamDataset(
-            slide_paths=paths, backend=FakeBackend(),
+            slide_paths=paths,
+            backend=FakeBackend(),
             tissue_detector=OtsuTissueDetector(),
             sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
-            pool_size=4, patches_per_slide=2, cycle=False, seed=1,
+            pool_size=4,
+            patches_per_slide=2,
+            cycle=False,
+            seed=1,
         )
         seen = {item["slide_path"] for item in dataset}
         assert seen == set(paths)
@@ -457,8 +474,7 @@ class TestDdpTrainingLoop:
         )
 
         results = [
-            json.loads((tmp_path / f"rank_{rank}.json").read_text())
-            for rank in range(world_size)
+            json.loads((tmp_path / f"rank_{rank}.json").read_text()) for rank in range(world_size)
         ]
         expected = {
             rank: set(partition_slides_by_rank(slide_paths, rank=rank, world_size=world_size))

@@ -66,9 +66,7 @@ class TestNormalizeTransform:
 
     def test_imagenet_normalization(self):
         img = np.ones((10, 10, 3), dtype=np.uint8) * 128
-        out = NormalizeTransform(
-            mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)
-        )(img)
+        out = NormalizeTransform(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))(img)
         assert out.dtype == np.float32
         assert out.shape == (10, 10, 3)
 
@@ -132,8 +130,7 @@ class TestSeededRandomness:
         outputs = [t(img.copy()) for _ in range(10)]
         # Not all outputs should be identical
         unique = sum(
-            1 for i in range(1, len(outputs))
-            if not np.array_equal(outputs[0], outputs[i])
+            1 for i in range(1, len(outputs)) if not np.array_equal(outputs[0], outputs[i])
         )
         assert unique > 0, "Seeded RandomFlipRotate produced identical output every call"
 
@@ -143,8 +140,7 @@ class TestSeededRandomness:
 
         outputs = [t(img.copy()) for _ in range(5)]
         unique = sum(
-            1 for i in range(1, len(outputs))
-            if not np.array_equal(outputs[0], outputs[i])
+            1 for i in range(1, len(outputs)) if not np.array_equal(outputs[0], outputs[i])
         )
         assert unique > 0, "Seeded HEDColorAugmentation produced identical output every call"
 

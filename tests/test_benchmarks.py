@@ -61,28 +61,27 @@ class TestThroughput:
     def test_no_transforms(self, slides, make_backend):
         count, elapsed = _run_pipeline(slides, make_backend, transforms=None)
         rate = count / elapsed
-        print(f"\n  no transforms: {count} patches in {elapsed:.2f}s "
-              f"-> {rate:.1f} patches/sec")
+        print(f"\n  no transforms: {count} patches in {elapsed:.2f}s " f"-> {rate:.1f} patches/sec")
         assert count == NUM_PATCHES
 
     def test_resize_only(self, slides, make_backend):
         transforms = ComposeTransforms([ResizeTransform(target_size=224)])
         count, elapsed = _run_pipeline(slides, make_backend, transforms=transforms)
         rate = count / elapsed
-        print(f"\n  resize only:   {count} patches in {elapsed:.2f}s "
-              f"-> {rate:.1f} patches/sec")
+        print(f"\n  resize only:   {count} patches in {elapsed:.2f}s " f"-> {rate:.1f} patches/sec")
         assert count == NUM_PATCHES
 
     def test_full_midnight(self, slides, make_backend):
-        transforms = ComposeTransforms([
-            HEDColorAugmentation(sigma=0.05),
-            RandomFlipRotate(),
-            ResizeTransform(target_size=224),
-        ])
+        transforms = ComposeTransforms(
+            [
+                HEDColorAugmentation(sigma=0.05),
+                RandomFlipRotate(),
+                ResizeTransform(target_size=224),
+            ]
+        )
         count, elapsed = _run_pipeline(slides, make_backend, transforms=transforms)
         rate = count / elapsed
-        print(f"\n  full Midnight: {count} patches in {elapsed:.2f}s "
-              f"-> {rate:.1f} patches/sec")
+        print(f"\n  full Midnight: {count} patches in {elapsed:.2f}s " f"-> {rate:.1f} patches/sec")
         assert count == NUM_PATCHES
 
     def test_with_hsv_filter(self, slides, make_backend):
@@ -93,11 +92,13 @@ class TestThroughput:
             tissue_detector=HSVTissueDetector(),
             patch_filter=HSVPatchFilter(min_pixel_fraction=0.6),
             sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
-            transforms=ComposeTransforms([
-                HEDColorAugmentation(sigma=0.05),
-                RandomFlipRotate(),
-                ResizeTransform(target_size=224),
-            ]),
+            transforms=ComposeTransforms(
+                [
+                    HEDColorAugmentation(sigma=0.05),
+                    RandomFlipRotate(),
+                    ResizeTransform(target_size=224),
+                ]
+            ),
             pool_size=min(4, len(slides)),
             patches_per_slide=max(NUM_PATCHES // len(slides), 10),
             cycle=True,
@@ -112,8 +113,10 @@ class TestThroughput:
         elapsed = time.perf_counter() - t0
         rate = count / elapsed
         filtered = pipeline.stats.patches_filtered
-        print(f"\n  with HSV filter: {count} patches in {elapsed:.2f}s "
-              f"-> {rate:.1f} patches/sec ({filtered} filtered)")
+        print(
+            f"\n  with HSV filter: {count} patches in {elapsed:.2f}s "
+            f"-> {rate:.1f} patches/sec ({filtered} filtered)"
+        )
         assert count == NUM_PATCHES
 
 

@@ -40,17 +40,19 @@ class SlideHandle:
         except Exception:
             self._backend.close()
             raise
-        logger.debug("Opened %s (%dx%d, %d levels, mpp=%s)",
-                     self._path, *self._properties.dimensions,
-                     self._properties.level_count, self._properties.mpp)
+        logger.debug(
+            "Opened %s (%dx%d, %d levels, mpp=%s)",
+            self._path,
+            *self._properties.dimensions,
+            self._properties.level_count,
+            self._properties.mpp,
+        )
 
     @property
     def properties(self) -> SlideProperties:
         return self._properties
 
-    def read_region(
-        self, x: int, y: int, width: int, height: int, level: int = 0
-    ) -> np.ndarray:
+    def read_region(self, x: int, y: int, width: int, height: int, level: int = 0) -> np.ndarray:
         """Read a region as an RGB numpy array (H, W, 3), uint8."""
         return self._backend.read_region(x, y, level, width, height)
 

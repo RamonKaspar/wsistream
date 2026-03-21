@@ -10,8 +10,10 @@ import numpy as np
 
 
 def plot_tissue_mask(
-    thumbnail: np.ndarray, mask: np.ndarray,
-    alpha: float = 0.4, color: tuple[int, int, int] = (0, 255, 0),
+    thumbnail: np.ndarray,
+    mask: np.ndarray,
+    alpha: float = 0.4,
+    color: tuple[int, int, int] = (0, 255, 0),
     save_path: str | Path | None = None,
 ) -> np.ndarray:
     """Overlay a tissue mask on a thumbnail. Returns the overlay image."""
@@ -30,8 +32,10 @@ def plot_tissue_mask(
 
 
 def plot_patch_grid(
-    patches: Sequence[np.ndarray], ncols: int = 8,
-    patch_display_size: int = 128, titles: Sequence[str] | None = None,
+    patches: Sequence[np.ndarray],
+    ncols: int = 8,
+    patch_display_size: int = 128,
+    titles: Sequence[str] | None = None,
     save_path: str | Path | None = None,
 ) -> np.ndarray:
     """Arrange patches in a grid. Returns the grid image."""
@@ -51,10 +55,11 @@ def plot_patch_grid(
             p = np.clip(p * 255 if p.max() <= 1.0 else p, 0, 255).astype(np.uint8)
         resized = cv2.resize(p, (sz, sz))
         y0, x0 = row * cell + pad, col * cell + pad
-        grid[y0:y0 + sz, x0:x0 + sz] = resized
+        grid[y0 : y0 + sz, x0 : x0 + sz] = resized
         if titles and idx < len(titles):
-            cv2.putText(grid, titles[idx], (x0 + 4, y0 + 16),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 1)
+            cv2.putText(
+                grid, titles[idx], (x0 + 4, y0 + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 1
+            )
 
     if save_path:
         _save_image(grid, save_path)
@@ -62,8 +67,10 @@ def plot_patch_grid(
 
 
 def compare_transforms(
-    original: np.ndarray, transforms_dict: dict[str, object],
-    n_samples: int = 5, save_path: str | Path | None = None,
+    original: np.ndarray,
+    transforms_dict: dict[str, object],
+    n_samples: int = 5,
+    save_path: str | Path | None = None,
 ) -> np.ndarray:
     """Compare augmentation strategies side-by-side. Each row = one transform."""
     sz, pad = 128, 4
@@ -71,14 +78,16 @@ def compare_transforms(
     n_transforms = len(transforms_dict)
     ncols = n_samples + 1
     label_w = 160
-    grid = np.ones((n_transforms * cell + pad, label_w + ncols * cell + pad, 3), dtype=np.uint8) * 255
+    grid = (
+        np.ones((n_transforms * cell + pad, label_w + ncols * cell + pad, 3), dtype=np.uint8) * 255
+    )
 
     for row, (name, transform) in enumerate(transforms_dict.items()):
         y0 = row * cell + pad
         cv2.putText(grid, name, (8, y0 + sz // 2 + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1)
 
         resized = cv2.resize(original, (sz, sz))
-        grid[y0:y0 + sz, label_w + pad:label_w + pad + sz] = resized
+        grid[y0 : y0 + sz, label_w + pad : label_w + pad + sz] = resized
 
         for col in range(n_samples):
             aug = transform(original.copy())
@@ -86,7 +95,7 @@ def compare_transforms(
                 aug = np.clip(aug * 255 if aug.max() <= 1.0 else aug, 0, 255).astype(np.uint8)
             resized = cv2.resize(aug, (sz, sz))
             x0 = label_w + (col + 1) * cell + pad
-            grid[y0:y0 + sz, x0:x0 + sz] = resized
+            grid[y0 : y0 + sz, x0 : x0 + sz] = resized
 
     if save_path:
         _save_image(grid, save_path)
@@ -94,9 +103,11 @@ def compare_transforms(
 
 
 def plot_sampling_locations(
-    thumbnail: np.ndarray, coordinates: Sequence,
+    thumbnail: np.ndarray,
+    coordinates: Sequence,
     slide_dimensions: tuple[int, int],
-    color: tuple[int, int, int] = (255, 0, 0), marker_size: int = 3,
+    color: tuple[int, int, int] = (255, 0, 0),
+    marker_size: int = 3,
     save_path: str | Path | None = None,
 ) -> np.ndarray:
     """Plot sampled patch locations on a thumbnail."""

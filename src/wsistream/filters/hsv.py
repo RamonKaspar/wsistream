@@ -52,4 +52,4 @@ class HSVPatchFilter(PatchFilter):
         upper = np.array([self.hue_range[1], self.sat_range[1], self.val_range[1]])
         in_range = cv2.inRange(hsv, lower, upper)
         fraction = np.count_nonzero(in_range) / in_range.size
-        return fraction >= self.min_pixel_fraction
+        return bool(fraction >= self.min_pixel_fraction)

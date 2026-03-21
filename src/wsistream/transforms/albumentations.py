@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -23,7 +24,7 @@ class AlbumentationsWrapper(PatchTransform):
     ... ]))
     """
 
-    transform: object = None
+    transform: Any = None
 
     def __call__(self, image: np.ndarray) -> np.ndarray:
         if self.transform is None:

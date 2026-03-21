@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 import cv2
 import numpy as np
@@ -68,7 +68,7 @@ def plot_patch_grid(
 
 def compare_transforms(
     original: np.ndarray,
-    transforms_dict: dict[str, object],
+    transforms_dict: dict[str, Callable[[np.ndarray], np.ndarray]],
     n_samples: int = 5,
     save_path: str | Path | None = None,
 ) -> np.ndarray:

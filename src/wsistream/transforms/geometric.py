@@ -31,6 +31,6 @@ class RandomFlipRotate(PatchTransform):
         if self._rng.random() < self.p_vflip:
             image = np.flip(image, axis=0).copy()
         if self._rng.random() < self.p_rot90:
-            k = self._rng.integers(1, 4)
+            k = int(self._rng.integers(1, 4))
             image = np.rot90(image, k=k).copy()
         return image

@@ -295,15 +295,15 @@ def query_tcga_slides(
         records = sampled
 
     # Print summary
-    by_type: dict[str, list[dict]] = {}
+    summary_by_type: dict[str, list[dict]] = {}
     for rec in records:
-        by_type.setdefault(rec["cancer_type"], []).append(rec)
+        summary_by_type.setdefault(rec["cancer_type"], []).append(rec)
     total_bytes = sum(r["file_size"] for r in records)
     total_gb = total_bytes / (1024**3)
 
     summary_lines = [f"Found {len(records)} slides ({total_gb:.1f} GB):"]
-    for ct in sorted(by_type):
-        group = by_type[ct]
+    for ct in sorted(summary_by_type):
+        group = summary_by_type[ct]
         gb = sum(r["file_size"] for r in group) / (1024**3)
         summary_lines.append(f"  {ct}: {len(group)} slides ({gb:.1f} GB)")
     logger.info("\n".join(summary_lines))

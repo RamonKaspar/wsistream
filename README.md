@@ -4,21 +4,32 @@ Modular online patch streaming from whole-slide images for computational patholo
 
 Every component is pluggable: backends, tissue detectors, samplers, filters, transforms, dataset adapters.
 
-## Documentation
+## Install
 
 ```bash
-pip install mkdocs-material
-mkdocs serve          # local preview at http://127.0.0.1:8000
-mkdocs build          # static site in site/
+pip install "wsistream[openslide]"   # with OpenSlide
+pip install "wsistream[tiffslide]"   # with TiffSlide (pure Python)
+pip install "wsistream[torch]"       # add PyTorch integration (WsiStreamDataset, DDP)
+pip install "wsistream[all]"         # everything (OpenSlide + TiffSlide + PyTorch + albumentations + matplotlib)
 ```
 
-## Install
+For development:
 
 ```bash
 git clone https://github.com/RamonKaspar/wsistream.git
 cd wsistream
-pip install -e ".[openslide]"   # with OpenSlide
-pip install -e ".[tiffslide]"   # with TiffSlide (pure Python)
+pip install -e ".[dev]"
+```
+
+## Documentation
+
+Full documentation: [ramonkaspar.github.io/wsistream](https://ramonkaspar.github.io/wsistream)
+
+To build locally:
+
+```bash
+pip install mkdocs-material
+mkdocs serve          # local preview at http://127.0.0.1:8000
 ```
 
 ## How it works
@@ -33,10 +44,6 @@ Each slide goes through a fixed pipeline:
 6. **Transform patch**: apply augmentations (`HEDColorAugmentation`, `RandomFlipRotate`, etc.)
 7. **Yield result**: `PatchResult` with image, coordinates, tissue fraction, and metadata
 
-<p align="center">
-  <img src="docs/assets/pipeline_overview.svg" alt="Pipeline overview" width="100%">
-</p>
-
 ## Quick start
 
 ```python
@@ -49,7 +56,7 @@ from wsistream.transforms import ComposeTransforms, HEDColorAugmentation, Random
 from wsistream.datasets import TCGAAdapter
 
 pipeline = PatchPipeline(
-    slide_paths=["slide_A.svs", "slide_B.svs", "slide_C.svs"],
+    slide_paths="/data/tcga",  # directory or list of files
     backend=OpenSlideBackend(),
     tissue_detector=CLAMTissueDetector(),
     sampler=RandomSampler(patch_size=256, num_patches=-1, target_mpp=0.5),
@@ -78,4 +85,28 @@ The pipeline keeps `pool_size` slides open simultaneously and takes `patches_per
 
 ## PyTorch integration
 
-`PatchPipeline` implements `__iter__`, so wrapping it in a PyTorch `IterableDataset` is straightforward. See [`examples/example_ddp_training.py`](examples/example_ddp_training.py) for the full pattern including DDP rank/worker splitting.
+`wsistream.torch` provides `WsiStreamDataset` (an `IterableDataset`), `MonitoredLoader` for throughput tracking, and `partition_slides_by_rank` for DDP. Worker-level slide partitioning is handled automatically.
+
+```python
+from torch.utils.data import DataLoader
+from wsistream.backends import OpenSlideBackend
+from wsistream.sampling import RandomSampler
+from wsistream.tissue import OtsuTissueDetector
+from wsistream.torch import WsiStreamDataset, partition_slides_by_rank
+
+my_slides = partition_slides_by_rank("/data/tcga", rank=rank, world_size=world_size)
+
+dataset = WsiStreamDataset(
+    slide_paths=my_slides,
+    backend=OpenSlideBackend(),
+    tissue_detector=OtsuTissueDetector(),
+    sampler=RandomSampler(patch_size=256, num_patches=-1, target_mpp=0.5),
+)
+
+loader = DataLoader(dataset, batch_size=64, num_workers=4, pin_memory=True)
+loader_iter = iter(loader)
+
+for step in range(total_steps):
+    batch = next(loader_iter)
+    images = batch["image"].to(device, non_blocking=True)  # (B, 3, H, W) float32
+```

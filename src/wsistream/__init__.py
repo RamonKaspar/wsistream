@@ -28,7 +28,7 @@ from wsistream.transforms import (
 )
 from wsistream.types import PatchCoordinate, PatchResult, SlideMetadata, TissueMask
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     # Core
     "PatchPipeline",

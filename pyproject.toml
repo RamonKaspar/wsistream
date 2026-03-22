@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wsistream"
-version = "0.1.0"
+version = "0.1.1"
 description = "Modular online patch streaming from whole-slide images for computational pathology"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
-authors = [{name = "wsistream contributors"}]
+authors = [{name = "Ramon Kaspar"}]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -50,6 +50,12 @@ dev = [
     "matplotlib>=3.7",
     "torch>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/RamonKaspar/wsistream"
+Documentation = "https://ramonkaspar.github.io/wsistream"
+Repository = "https://github.com/RamonKaspar/wsistream"
+Issues = "https://github.com/RamonKaspar/wsistream/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

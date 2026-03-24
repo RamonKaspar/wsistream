@@ -1,0 +1,54 @@
+site_name: wsistream
+site_description: Modular online patch streaming from whole-slide images
+repo_url: https://github.com/RamonKaspar/wsistream
+
+theme:
+  name: material
+  palette:
+    scheme: default
+    primary: deep purple
+    accent: amber
+  features:
+    - content.code.copy
+    - navigation.sections
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Concepts:
+    - Online Patching: concepts/online-patching.md
+    - Architecture: concepts/architecture.md
+  - Components:
+    - Backends: components/backends.md
+    - Tissue Detection: components/tissue-detection.md
+    - Sampling: components/sampling.md
+    - Filters: components/filters.md
+    - Transforms: components/transforms.md
+    - Dataset Adapters: components/dataset-adapters.md
+  - Integration:
+    - PyTorch DataLoader: integration/pytorch-dataloader.md
+    - Distributed (DDP): integration/ddp.md
+    - Weights & Biases: integration/wandb.md
+    - Benchmarking: integration/benchmarking.md
+  - Paper Recipes:
+    - Overview: recipes/index.md
+    - Midnight: recipes/midnight.md
+    - UNI: recipes/uni.md
+    - Virchow: recipes/virchow.md
+    - GPFM: recipes/gpfm.md
+    - Prov-GigaPath: recipes/prov-gigapath.md

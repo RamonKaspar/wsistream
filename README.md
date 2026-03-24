@@ -1,5 +1,12 @@
 # `wsistream`
 
+<p align="center">
+    <a href="https://pypi.org/project/wsistream/"><img alt="PyPI" src="https://img.shields.io/pypi/v/wsistream"></a>
+    <a href="https://pypi.org/project/wsistream/"><img alt="Python" src="https://img.shields.io/pypi/pyversions/wsistream"></a>
+    <a href="https://github.com/RamonKaspar/wsistream/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/RamonKaspar/wsistream"></a>
+    <a href="https://ramonkaspar.github.io/wsistream"><img alt="Docs" src="https://img.shields.io/badge/docs-GitHub%20Pages-blue"></a>
+</p>
+
 Modular online patch streaming from whole-slide images for computational pathology. Stream patches directly from WSIs during training (no disk pre-extraction, no storage overhead).
 
 Every component is pluggable: backends, tissue detectors, samplers, filters, transforms, dataset adapters.

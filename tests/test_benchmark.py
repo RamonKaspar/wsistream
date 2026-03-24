@@ -20,7 +20,7 @@ def _can_use_gloo() -> bool:
         return False
 
 
-def _make_test_dataset(slide_paths, pool_size, patches_per_slide, seed):
+def _make_test_dataset(slide_paths, pool_size, patches_per_slide, patches_per_visit, seed):
     """Top-level factory for benchmark tests. Must be picklable."""
     return WsiStreamDataset(
         slide_paths=slide_paths,
@@ -29,12 +29,13 @@ def _make_test_dataset(slide_paths, pool_size, patches_per_slide, seed):
         sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
         pool_size=pool_size,
         patches_per_slide=patches_per_slide,
-        cycle=True,  # benchmark measures steady-state; finite iteration would stop early
+        patches_per_visit=patches_per_visit,
+        cycle=True,
         seed=seed,
     )
 
 
-def _make_cycle_false_dataset(slide_paths, pool_size, patches_per_slide, seed):
+def _make_cycle_false_dataset(slide_paths, pool_size, patches_per_slide, patches_per_visit, seed):
     return WsiStreamDataset(
         slide_paths=slide_paths,
         backend=FakeBackend(),
@@ -42,6 +43,7 @@ def _make_cycle_false_dataset(slide_paths, pool_size, patches_per_slide, seed):
         sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
         pool_size=pool_size,
         patches_per_slide=patches_per_slide,
+        patches_per_visit=patches_per_visit,
         cycle=False,
         seed=seed,
     )
@@ -99,6 +101,7 @@ class TestBenchmarkSingleRank:
         assert r.world_size == 1
         assert r.pool_size == 2
         assert r.patches_per_slide == 10
+        assert r.patches_per_visit == 1
         assert r.batch_size == 4
         assert len(r.per_rank_patches_per_sec) == 1
         assert len(r.per_rank_batch_times_ms) == 1
@@ -139,22 +142,39 @@ class TestBenchmarkGridSearch:
         # 2 num_workers x 2 pool_sizes = 4 configs
         assert len(results) == 4
 
-    def test_skip_insufficient_slides(self):
+    def test_sweep_patches_per_visit(self):
         results = benchmark_throughput(
             make_dataset=_make_test_dataset,
-            slide_paths=fake_slide_paths(2),
+            slide_paths=fake_slide_paths(4),
             num_workers=0,
-            world_size=[1, 4],
+            world_size=1,
             pool_size=2,
             patches_per_slide=10,
+            patches_per_visit=[1, 4],
             batch_size=4,
             warmup_batches=2,
             measure_batches=3,
             verbose=False,
         )
-        # world_size=4 should be skipped (only 2 slides)
-        assert len(results) == 1
-        assert results[0].world_size == 1
+        assert len(results) == 2
+        assert results[0].patches_per_visit == 1
+        assert results[1].patches_per_visit == 4
+
+    def test_skip_insufficient_slides(self):
+        """world_size=4 but only 2 slides -> all configs skipped -> raises."""
+        with pytest.raises(RuntimeError, match="All .* failed"):
+            benchmark_throughput(
+                make_dataset=_make_test_dataset,
+                slide_paths=fake_slide_paths(2),
+                num_workers=0,
+                world_size=4,
+                pool_size=2,
+                patches_per_slide=10,
+                batch_size=4,
+                warmup_batches=2,
+                measure_batches=3,
+                verbose=False,
+            )
 
 
 class TestBenchmarkMultiRank:
@@ -213,8 +233,8 @@ class TestBenchmarkValidation:
     )
     def test_unpicklable_factory_raises(self):
         # Nested functions are not picklable — DDP spawn will fail
-        def bad_factory(sp, ps, pps, s):
-            return _make_test_dataset(sp, ps, pps, s)
+        def bad_factory(sp, ps, pps, ppv, s):
+            return _make_test_dataset(sp, ps, pps, ppv, s)
 
         with pytest.raises(TypeError, match="not picklable"):
             benchmark_throughput(

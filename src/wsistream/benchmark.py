@@ -27,8 +27,8 @@ from wsistream.types import resolve_slide_paths
 
 logger = logging.getLogger(__name__)
 
-# Factory: (slide_paths, pool_size, patches_per_slide, seed) -> IterableDataset
-MakeDatasetFn = Callable[["list[str]", int, int, int], IterableDataset]
+# Factory: (slide_paths, pool_size, patches_per_slide, patches_per_visit, seed) -> IterableDataset
+MakeDatasetFn = Callable[["list[str]", int, int, int, int], IterableDataset]
 
 
 @dataclass
@@ -39,6 +39,7 @@ class BenchmarkResult:
     world_size: int
     pool_size: int
     patches_per_slide: int
+    patches_per_visit: int
     batch_size: int
     per_rank_patches_per_sec: list[float]
     per_rank_batch_times_ms: list[list[float]]
@@ -81,6 +82,7 @@ def _measure_rank(
     num_workers: int,
     pool_size: int,
     patches_per_slide: int,
+    patches_per_visit: int,
     batch_size: int,
     warmup_batches: int,
     measure_batches: int,
@@ -93,7 +95,7 @@ def _measure_rank(
     """Run measurement for a single rank. Returns raw results dict."""
     from torch.utils.data import DataLoader
 
-    dataset = make_dataset(slide_paths, pool_size, patches_per_slide, seed)
+    dataset = make_dataset(slide_paths, pool_size, patches_per_slide, patches_per_visit, seed)
 
     loader_kwargs: dict = {
         "batch_size": batch_size,
@@ -141,6 +143,7 @@ def _benchmark_worker(
     num_workers: int,
     pool_size: int,
     patches_per_slide: int,
+    patches_per_visit: int,
     batch_size: int,
     warmup_batches: int,
     measure_batches: int,
@@ -171,6 +174,7 @@ def _benchmark_worker(
             num_workers=num_workers,
             pool_size=pool_size,
             patches_per_slide=patches_per_slide,
+            patches_per_visit=patches_per_visit,
             batch_size=batch_size,
             warmup_batches=warmup_batches,
             measure_batches=measure_batches,
@@ -193,6 +197,7 @@ def _run_config(
     world_size: int,
     pool_size: int,
     patches_per_slide: int,
+    patches_per_visit: int,
     batch_size: int,
     warmup_batches: int,
     measure_batches: int,
@@ -212,6 +217,7 @@ def _run_config(
             num_workers=num_workers,
             pool_size=pool_size,
             patches_per_slide=patches_per_slide,
+            patches_per_visit=patches_per_visit,
             batch_size=batch_size,
             warmup_batches=warmup_batches,
             measure_batches=measure_batches,
@@ -238,6 +244,7 @@ def _run_config(
                     num_workers,
                     pool_size,
                     patches_per_slide,
+                    patches_per_visit,
                     batch_size,
                     warmup_batches,
                     measure_batches,
@@ -271,6 +278,7 @@ def _run_config(
         world_size=world_size,
         pool_size=pool_size,
         patches_per_slide=patches_per_slide,
+        patches_per_visit=patches_per_visit,
         batch_size=batch_size,
         per_rank_patches_per_sec=per_rank_pps,
         per_rank_batch_times_ms=per_rank_batch_times,
@@ -289,9 +297,10 @@ def benchmark_throughput(
     make_dataset: MakeDatasetFn,
     slide_paths: str | Path | list[str | Path],
     num_workers: list[int] | int = 4,
-    world_size: list[int] | int = 1,
+    world_size: int = 1,
     pool_size: list[int] | int = 8,
     patches_per_slide: list[int] | int = 100,
+    patches_per_visit: list[int] | int = 1,
     batch_size: int = 64,
     warmup_batches: int = 10,
     measure_batches: int = 50,
@@ -304,8 +313,8 @@ def benchmark_throughput(
 ) -> list[BenchmarkResult]:
     """Benchmark DataLoader throughput across pipeline configurations.
 
-    Sweeps over ``num_workers``, ``world_size``, ``pool_size``, and
-    ``patches_per_slide`` to find the configuration that maximizes
+    Sweeps over ``num_workers``, ``pool_size``, ``patches_per_slide``,
+    and ``patches_per_visit`` to find the configuration that maximizes
     patch throughput.  For ``world_size > 1``, launches actual DDP
     processes via ``torch.multiprocessing.spawn`` to measure realistic
     filesystem contention.
@@ -313,7 +322,8 @@ def benchmark_throughput(
     Parameters
     ----------
     make_dataset : callable
-        Factory ``(slide_paths, pool_size, patches_per_slide, seed) -> WsiStreamDataset``.
+        Factory ``(slide_paths, pool_size, patches_per_slide,
+        patches_per_visit, seed) -> WsiStreamDataset``.
         Must return a dataset with ``cycle=True``.  Must be a top-level
         function (not a lambda or closure) when ``world_size > 1``.
     slide_paths : str, Path, or list
@@ -322,12 +332,15 @@ def benchmark_throughput(
         ``partition_slides_by_rank``.
     num_workers : int or list[int]
         DataLoader worker counts to sweep.
-    world_size : int or list[int]
-        DDP rank counts to sweep.
+    world_size : int
+        Number of DDP ranks (determined by your GPU count).
     pool_size : int or list[int]
         Pipeline pool sizes to sweep.
     patches_per_slide : int or list[int]
         Patches-per-slide values to sweep.
+    patches_per_visit : int or list[int]
+        Patches-per-visit values to sweep. Higher values improve I/O
+        locality on network filesystems.
     batch_size : int
         Fixed batch size for all configs.
     warmup_batches : int
@@ -352,16 +365,16 @@ def benchmark_throughput(
         raise ValueError("slide_paths is empty")
 
     num_workers_list = _ensure_list(num_workers)
-    world_size_list = _ensure_list(world_size)
     pool_size_list = _ensure_list(pool_size)
     pps_list = _ensure_list(patches_per_slide)
+    ppv_list = _ensure_list(patches_per_visit)
 
     configs = list(
         itertools.product(
-            world_size_list,
             num_workers_list,
             pool_size_list,
             pps_list,
+            ppv_list,
         )
     )
 
@@ -369,7 +382,7 @@ def benchmark_throughput(
     thread_settings = _configure_threads()
 
     if verbose:
-        print(f"Slides: {len(slide_paths)}")
+        print(f"Slides: {len(slide_paths)} | World size: {world_size}")
         print(f"Thread settings: {thread_settings}")
         print(
             f"Batch size: {batch_size}, "
@@ -378,8 +391,7 @@ def benchmark_throughput(
         print(f"Testing {len(configs)} configuration(s)\n")
 
     # Check for DDP pickle safety upfront
-    max_ws = max(world_size_list)
-    if max_ws > 1:
+    if world_size > 1:
         try:
             pickle.loads(pickle.dumps(make_dataset))
         except (pickle.PicklingError, AttributeError, TypeError) as e:
@@ -391,7 +403,7 @@ def benchmark_throughput(
             ) from e
 
     # Validate cycle=True with a probe dataset before running the full sweep
-    probe = make_dataset(slide_paths[:1], pool_size_list[0], pps_list[0], seed)
+    probe = make_dataset(slide_paths[:1], pool_size_list[0], pps_list[0], ppv_list[0], seed)
     if hasattr(probe, "_cycle") and not probe._cycle:
         raise ValueError(
             "benchmark_throughput requires cycle=True in the dataset factory. "
@@ -403,9 +415,9 @@ def benchmark_throughput(
     # Table header
     if verbose:
         header = (
-            f"{'world_size':>10}  {'num_workers':>11}  {'pool_size':>9}  "
-            f"{'patches/slide':>13}  {'effective':>11}  {'aggregate':>11}  "
-            f"{'slowest':>9}"
+            f"{'num_workers':>11}  {'pool_size':>9}  "
+            f"{'patches/slide':>13}  {'patches/visit':>13}  "
+            f"{'effective':>11}  {'aggregate':>11}  {'slowest':>9}"
         )
         print(header)
         print("-" * len(header))
@@ -413,22 +425,22 @@ def benchmark_throughput(
     cpu_count = os.cpu_count() or 1
     results: list[BenchmarkResult] = []
 
-    for ws, nw, ps, pps in configs:
-        if len(slide_paths) < ws:
+    for nw, ps, pps, ppv in configs:
+        if len(slide_paths) < world_size:
             if verbose:
                 print(
-                    f"{'SKIP':>10}  {nw:>11}  {ps:>9}  {pps:>13}  "
-                    f"need >= {ws} slides (have {len(slide_paths)})"
+                    f"{nw:>11}  {ps:>9}  {pps:>13}  {ppv:>13}  "
+                    f"SKIP: need >= {world_size} slides (have {len(slide_paths)})"
                 )
             continue
 
-        total_workers = ws * nw
+        total_workers = world_size * nw
         if total_workers > cpu_count:
             logger.warning(
                 "Oversubscription: world_size=%d x num_workers=%d = %d worker "
                 "processes but only %d CPU cores. Results may be bottlenecked "
                 "by context switching.",
-                ws,
+                world_size,
                 nw,
                 total_workers,
                 cpu_count,
@@ -439,9 +451,10 @@ def benchmark_throughput(
                 make_dataset=make_dataset,
                 slide_paths=slide_paths,
                 num_workers=nw,
-                world_size=ws,
+                world_size=world_size,
                 pool_size=ps,
                 patches_per_slide=pps,
+                patches_per_visit=ppv,
                 batch_size=batch_size,
                 warmup_batches=warmup_batches,
                 measure_batches=measure_batches,
@@ -457,7 +470,7 @@ def benchmark_throughput(
 
             if verbose:
                 print(
-                    f"{ws:>10}  {nw:>11}  {ps:>9}  {pps:>13}  "
+                    f"{nw:>11}  {ps:>9}  {pps:>13}  {ppv:>13}  "
                     f"{result.effective_sync_throughput:>11.0f}  "
                     f"{result.aggregate_throughput:>11.0f}  "
                     f"{slowest:>9.0f}"
@@ -465,8 +478,8 @@ def benchmark_throughput(
 
         except Exception as e:
             if verbose:
-                print(f"{ws:>10}  {nw:>11}  {ps:>9}  {pps:>13}  ERROR: {e}")
-            logger.warning("Config ws=%d nw=%d ps=%d pps=%d failed: %s", ws, nw, ps, pps, e)
+                print(f"{nw:>11}  {ps:>9}  {pps:>13}  {ppv:>13}  ERROR: {e}")
+            logger.warning("Config nw=%d ps=%d pps=%d ppv=%d failed: %s", nw, ps, pps, ppv, e)
 
     if not results:
         raise RuntimeError(
@@ -476,8 +489,10 @@ def benchmark_throughput(
     if verbose:
         best = max(results, key=lambda r: r.effective_sync_throughput)
         print(
-            f"\nBest: world_size={best.world_size}, num_workers={best.num_workers}, "
-            f"pool_size={best.pool_size}, patches_per_slide={best.patches_per_slide} "
+            f"\nBest: num_workers={best.num_workers}, "
+            f"pool_size={best.pool_size}, "
+            f"patches_per_slide={best.patches_per_slide}, "
+            f"patches_per_visit={best.patches_per_visit} "
             f"-> {best.effective_sync_throughput:.0f} effective patches/sec"
         )
         print("\nPer-rank detail (best config):")

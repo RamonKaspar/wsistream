@@ -139,10 +139,11 @@ class PatchPipeline:
     Pool-based online patch extraction pipeline.
 
     Maintains up to ``pool_size`` slides open simultaneously and
-    round-robins across them, yielding one patch at a time from each
-    slide in turn.  This guarantees that patches from different slides
-    are interleaved even when samplers produce many patches per slide
-    (including ``num_patches=-1`` / infinite mode).
+    round-robins across them.  By default, one patch is read per slide
+    before advancing (``patches_per_visit=1``); set higher for better
+    I/O locality on network filesystems.  This ensures patches from
+    different slides are interleaved even when samplers produce many
+    patches per slide (including ``num_patches=-1`` / infinite mode).
 
     Parameters
     ----------
@@ -177,6 +178,14 @@ class PatchPipeline:
         opening the next.  Counts every extraction attempt, including
         patches rejected by ``patch_filter``.  Essential for infinite
         samplers (``num_patches=-1``) where the sampler itself never stops.
+    patches_per_visit : int
+        Number of patches to read from the current slide before
+        round-robining to the next slide in the pool.  Higher values
+        improve I/O locality (the OS file cache stays warm for
+        consecutive reads from the same slide) at the cost of reduced
+        interleaving.  Default ``1`` gives maximum interleaving.
+        Values like ``8``--``16`` can significantly improve throughput
+        on network filesystems.
     cycle : bool
         When ``True``, re-queue all slides once the queue is exhausted,
         producing an infinite stream that cycles over the whole corpus.
@@ -195,6 +204,7 @@ class PatchPipeline:
     slide_sampling: str = "sequential"
     pool_size: int = 8
     patches_per_slide: int = 100
+    patches_per_visit: int = 1
     cycle: bool = False
     seed: int | None = None
 
@@ -207,6 +217,8 @@ class PatchPipeline:
             raise ValueError(f"pool_size must be >= 1, got {self.pool_size}")
         if self.patches_per_slide < 1:
             raise ValueError(f"patches_per_slide must be >= 1, got {self.patches_per_slide}")
+        if self.patches_per_visit < 1:
+            raise ValueError(f"patches_per_visit must be >= 1, got {self.patches_per_visit}")
         self.slide_paths = resolve_slide_paths(self.slide_paths)
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
@@ -250,6 +262,7 @@ class PatchPipeline:
             return
 
         pool_idx = 0
+        visit_count = 0  # patches read from current slide in this visit
         try:
             while pool:
                 entry = pool[pool_idx]
@@ -265,6 +278,7 @@ class PatchPipeline:
                     if not pool:
                         break
                     pool_idx = pool_idx % len(pool)
+                    visit_count = 0
                     continue
 
                 # Read patch from slide
@@ -287,8 +301,12 @@ class PatchPipeline:
                         if not pool:
                             break
                         pool_idx = pool_idx % len(pool)
+                        visit_count = 0
                     else:
-                        pool_idx = (pool_idx + 1) % len(pool)
+                        visit_count += 1
+                        if visit_count >= self.patches_per_visit:
+                            pool_idx = (pool_idx + 1) % len(pool)
+                            visit_count = 0
                     continue
 
                 # Every successful read counts toward the per-slide budget,
@@ -307,8 +325,12 @@ class PatchPipeline:
                         if not pool:
                             break
                         pool_idx = pool_idx % len(pool)
+                        visit_count = 0
                     else:
-                        pool_idx = (pool_idx + 1) % len(pool)
+                        visit_count += 1
+                        if visit_count >= self.patches_per_visit:
+                            pool_idx = (pool_idx + 1) % len(pool)
+                            visit_count = 0
                     continue
 
                 if self.transforms is not None:
@@ -346,8 +368,12 @@ class PatchPipeline:
                     if not pool:
                         break
                     pool_idx = pool_idx % len(pool)
+                    visit_count = 0
                 else:
-                    pool_idx = (pool_idx + 1) % len(pool)
+                    visit_count += 1
+                    if visit_count >= self.patches_per_visit:
+                        pool_idx = (pool_idx + 1) % len(pool)
+                        visit_count = 0
         finally:
             # Cleanup: close any remaining slides (runs even on early break /
             # GeneratorExit, preventing file-handle leaks).

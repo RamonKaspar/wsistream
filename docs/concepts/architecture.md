@@ -27,7 +27,7 @@ Steps 3 and 6 are both tissue/quality checks, but at different resolutions:
 
 ## Pool-based slide interleaving
 
-The `PatchPipeline` maintains a pool of simultaneously open slides (controlled by `pool_size`) and round-robins across them. This guarantees that patches from different slides are interleaved in the output stream, even when using infinite samplers (`num_patches=-1`).
+The `PatchPipeline` maintains a pool of simultaneously open slides (controlled by `pool_size`) and round-robins across them, ensuring patches from different slides are interleaved in the output stream. By default, one patch is read per slide before advancing (`patches_per_visit=1`); set higher for better I/O locality on network filesystems.
 
 Each slide has a `patches_per_slide` budget. Once a slide exhausts its budget, it is closed and replaced by the next slide from the queue. This prevents any single slide from dominating the stream.
 
@@ -47,6 +47,21 @@ graph LR
 ```
 
 *Example with `pool_size=4` and `patches_per_slide=3`: each box is one round-robin pass yielding one patch per slide. After 3 patches from each slide, the pool rotates.*
+
+### I/O locality with `patches_per_visit`
+
+By default, the pipeline reads one patch per slide before advancing to the next (`patches_per_visit=1`). On network filesystems (NFS, Lustre, GPFS), this causes frequent cache misses because every read hits a different file. Setting `patches_per_visit` to a higher value (e.g., 8-16) reads multiple consecutive patches from the same slide before round-robining, keeping the OS file cache warm:
+
+```python
+pipeline = PatchPipeline(
+    ...,
+    pool_size=20,
+    patches_per_slide=500,
+    patches_per_visit=10,  # read 10 patches before advancing to next slide
+)
+```
+
+This trades some interleaving granularity for significantly better I/O throughput. The total number of patches per slide is unchanged — only the order within the pool changes.
 
 ## Data types
 
@@ -108,6 +123,7 @@ PatchPipeline(
     thumbnail_size=(2048, 2048),# resolution for tissue detection
     pool_size=8,                # slides open simultaneously
     patches_per_slide=100,      # per-slide budget before rotation
+    patches_per_visit=1,        # patches per slide before round-robin (increase for I/O locality)
     slide_sampling="sequential",# "sequential" or "random" slide order
     cycle=False,                # infinite cycling over slides
     seed=None,                  # random seed for slide-level shuffling

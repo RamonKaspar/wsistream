@@ -61,6 +61,7 @@ Key pipeline parameters:
 |-----------|-------------|
 | `pool_size` | Number of slides kept open simultaneously. Patches are interleaved across the pool via round-robin. |
 | `patches_per_slide` | Maximum patches extracted from one slide before it is closed and replaced by the next. |
+| `patches_per_visit` | Patches read from one slide before advancing to the next in the pool. Higher values improve I/O throughput on network filesystems. Default `1`. |
 | `cycle` | When `True`, slides are re-queued after processing, producing an infinite stream for step-based training. |
 | `seed` | Random seed for slide-level shuffling. |
 

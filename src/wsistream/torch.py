@@ -200,6 +200,10 @@ class WsiStreamDataset(IterableDataset):
         Number of slides kept open simultaneously.
     patches_per_slide : int
         Patches drawn from one slide before rotating to the next.
+    patches_per_visit : int
+        Patches read from one slide before round-robining to the next
+        in the pool.  Higher values improve I/O locality on network
+        filesystems.  Default ``1``.
     cycle : bool
         When ``True``, re-queue slides after exhaustion for infinite
         streaming (the typical mode for FM pretraining).
@@ -220,6 +224,7 @@ class WsiStreamDataset(IterableDataset):
         dataset_adapter: DatasetAdapter | None = None,
         pool_size: int = 8,
         patches_per_slide: int = 100,
+        patches_per_visit: int = 1,
         cycle: bool = True,
         slide_sampling: str = "random",
         seed: int | None = None,
@@ -233,6 +238,7 @@ class WsiStreamDataset(IterableDataset):
         self._dataset_adapter = dataset_adapter
         self._pool_size = pool_size
         self._patches_per_slide = patches_per_slide
+        self._patches_per_visit = patches_per_visit
         self._slide_sampling = slide_sampling
         self._cycle = cycle
         self._seed = seed
@@ -283,6 +289,7 @@ class WsiStreamDataset(IterableDataset):
             slide_sampling=self._slide_sampling,
             pool_size=self._pool_size,
             patches_per_slide=self._patches_per_slide,
+            patches_per_visit=self._patches_per_visit,
             cycle=self._cycle,
             seed=worker_seed,
         )

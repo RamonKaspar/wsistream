@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="docs/assets/logo.svg" alt="wsistream" width="450">
+    <img src="https://github.com/RamonKaspar/wsistream/blob/main/docs/assets/logo.svg" alt="wsistream" width="450">
 </p>
 
 <p align="center">
@@ -92,7 +92,7 @@ for result in pipeline:
 
 ## Pool-based slide interleaving
 
-The pipeline keeps `pool_size` slides open simultaneously and takes `patches_per_slide` patches from each before closing it and opening the next. With `cycle=True`, slides are re-queued for infinite streaming.
+The pipeline keeps `pool_size` slides open simultaneously and takes `patches_per_slide` patches from each before closing it and opening the next. With `cycle=True`, slides are re-queued for infinite streaming. Set `patches_per_visit` (default 1) to read multiple patches from the same slide before round-robining, which can significantly improve I/O throughput on network filesystems.
 
 ## PyTorch integration
 

@@ -1,4 +1,10 @@
-# `wsistream`
+<p align="center">
+    <img src="https://raw.githubusercontent.com/RamonKaspar/wsistream/main/docs/assets/logo.svg" alt="wsistream" width="320">
+</p>
+
+<p align="center">
+    <em>Modular online patch streaming from whole-slide images for computational pathology.</em>
+</p>
 
 <p align="center">
     <a href="https://pypi.org/project/wsistream/"><img alt="PyPI" src="https://img.shields.io/pypi/v/wsistream"></a>
@@ -7,9 +13,7 @@
     <a href="https://ramonkaspar.github.io/wsistream"><img alt="Docs" src="https://img.shields.io/badge/docs-GitHub%20Pages-blue"></a>
 </p>
 
-Modular online patch streaming from whole-slide images for computational pathology. Stream patches directly from WSIs during training (no disk pre-extraction, no storage overhead).
-
-Every component is pluggable: backends, tissue detectors, samplers, filters, transforms, dataset adapters.
+Stream patches directly from WSIs during training — no disk pre-extraction, no storage overhead. Every component is pluggable: backends, tissue detectors, samplers, filters, transforms, dataset adapters.
 
 ## Install
 

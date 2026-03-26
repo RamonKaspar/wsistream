@@ -27,6 +27,53 @@ from wsistream.types import resolve_slide_paths
 
 logger = logging.getLogger(__name__)
 
+
+class _MemoryMonitor:
+    """Sample peak RSS of the current process tree in a background thread."""
+
+    def __init__(self, interval: float = 0.5) -> None:
+        import threading
+
+        import psutil
+
+        self._process = psutil.Process()
+        self._interval = interval
+        self._peak_bytes: int = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _tree_rss(self) -> int:
+        """Sum RSS of the process and all its children."""
+        import psutil
+
+        try:
+            rss = self._process.memory_info().rss
+            for child in self._process.children(recursive=True):
+                try:
+                    rss += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            return rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return 0
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            rss = self._tree_rss()
+            if rss > self._peak_bytes:
+                self._peak_bytes = rss
+            self._stop.wait(self._interval)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> float:
+        """Stop monitoring and return peak RSS in MB."""
+        self._stop.set()
+        self._thread.join(timeout=2.0)
+        return self._peak_bytes / (1024 * 1024)
+
+
 # Factory: (slide_paths, pool_size, patches_per_slide, patches_per_visit, seed) -> IterableDataset
 MakeDatasetFn = Callable[["list[str]", int, int, int, int], IterableDataset]
 
@@ -47,6 +94,8 @@ class BenchmarkResult:
     aggregate_throughput: float
     total_patches: int
     total_time_sec: float
+    per_rank_peak_rss_mb: list[float]
+    peak_rss_mb: float
 
 
 def _find_free_port() -> int:
@@ -112,6 +161,10 @@ def _measure_rank(
     loader = DataLoader(dataset, **loader_kwargs)
     loader_iter = iter(loader)
 
+    # Start memory monitoring before warmup (captures slide opens + worker startup)
+    mem_monitor = _MemoryMonitor(interval=0.5)
+    mem_monitor.start()
+
     for _ in range(warmup_batches):
         next(loader_iter)
 
@@ -125,11 +178,14 @@ def _measure_rank(
         total_patches += batch["image"].shape[0]
     elapsed = time.perf_counter() - t_start
 
+    peak_rss_mb = mem_monitor.stop()
+
     return {
         "total_patches": total_patches,
         "elapsed_sec": elapsed,
         "batch_times": batch_times,
         "patches_per_sec": total_patches / elapsed,
+        "peak_rss_mb": peak_rss_mb,
     }
 
 
@@ -267,11 +323,13 @@ def _run_config(
         [t * 1000 for t in r["batch_times"]]  # convert to ms
         for r in rank_results
     ]
-    per_rank_p50 = [float(np.median(r["batch_times"])) for r in rank_results]
+    per_rank_rss = [r.get("peak_rss_mb", 0.0) for r in rank_results]
 
-    # In DDP, all ranks sync at each backward pass, so step rate is
-    # limited by the slowest rank
-    effective_sync = world_size * batch_size / max(per_rank_p50)
+    # In DDP, training rate is limited by the slowest rank.
+    # Use the slowest rank's total throughput (not median batch time,
+    # which is misleading for bursty/bimodal workloads).
+    slowest_pps = min(per_rank_pps)
+    effective_sync = slowest_pps * world_size
 
     return BenchmarkResult(
         num_workers=num_workers,
@@ -286,6 +344,8 @@ def _run_config(
         aggregate_throughput=sum(per_rank_pps),
         total_patches=sum(r["total_patches"] for r in rank_results),
         total_time_sec=max(r["elapsed_sec"] for r in rank_results),
+        per_rank_peak_rss_mb=per_rank_rss,
+        peak_rss_mb=max(per_rank_rss),
     )
 
 
@@ -417,7 +477,8 @@ def benchmark_throughput(
         header = (
             f"{'num_workers':>11}  {'pool_size':>9}  "
             f"{'patches/slide':>13}  {'patches/visit':>13}  "
-            f"{'effective':>11}  {'aggregate':>11}  {'slowest':>9}"
+            f"{'effective':>11}  {'aggregate':>11}  {'slowest':>9}  "
+            f"{'peak_rss':>10}"
         )
         print(header)
         print("-" * len(header))
@@ -473,7 +534,8 @@ def benchmark_throughput(
                     f"{nw:>11}  {ps:>9}  {pps:>13}  {ppv:>13}  "
                     f"{result.effective_sync_throughput:>11.0f}  "
                     f"{result.aggregate_throughput:>11.0f}  "
-                    f"{slowest:>9.0f}"
+                    f"{slowest:>9.0f}  "
+                    f"{result.peak_rss_mb:>8.0f} MB"
                 )
 
         except Exception as e:
@@ -499,9 +561,11 @@ def benchmark_throughput(
         for i, pps_val in enumerate(best.per_rank_patches_per_sec):
             p50 = float(np.median(best.per_rank_batch_times_ms[i]))
             p95 = float(np.percentile(best.per_rank_batch_times_ms[i], 95))
+            rss = best.per_rank_peak_rss_mb[i]
             print(
                 f"  rank {i}: {pps_val:.0f} patches/sec, "
-                f"batch_time p50={p50:.1f}ms p95={p95:.1f}ms"
+                f"batch_time p50={p50:.1f}ms p95={p95:.1f}ms, "
+                f"peak_rss={rss:.0f} MB"
             )
 
     return results

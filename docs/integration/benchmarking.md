@@ -52,21 +52,21 @@ Thread settings: {'OMP_NUM_THREADS': '1', 'MKL_NUM_THREADS': '1', 'torch.num_thr
 Batch size: 64, Warmup: 10 batches, Measure: 50 batches
 Testing 24 configuration(s)
 
-num_workers  pool_size  patches/slide  patches/visit    effective    aggregate    slowest
-          1          4            100              1          312          312         78
-          2          4            100              1         1103         1103        276
-          4          4            100              1         2100         2180        525
-          4          8            100              1         2150         2300        537
-          4          8            100              4         2280         2400        570
-          4          8            100             16         2050         2200        512
+num_workers  pool_size  patches/slide  patches/visit    effective    aggregate    slowest    peak_rss
+          1          4            100              1          312          312         78     1204 MB
+          2          4            100              1         1103         1103        276     2105 MB
+          4          4            100              1         2100         2180        525     3890 MB
+          4          8            100              1         2150         2300        537     4210 MB
+          4          8            100              4         2280         2400        570     4180 MB
+          4          8            100             16         2050         2200        512     4190 MB
 
 Best: num_workers=4, pool_size=8, patches_per_slide=100, patches_per_visit=4 -> 2280 effective patches/sec
 
 Per-rank detail (best config):
-  rank 0: 600 patches/sec, batch_time p50=106.5ms p95=112.3ms
-  rank 1: 590 patches/sec, batch_time p50=108.1ms p95=115.0ms
-  rank 2: 605 patches/sec, batch_time p50=105.8ms p95=110.7ms
-  rank 3: 605 patches/sec, batch_time p50=105.9ms p95=111.2ms
+  rank 0: 600 patches/sec, batch_time p50=106.5ms p95=112.3ms, peak_rss=4180 MB
+  rank 1: 590 patches/sec, batch_time p50=108.1ms p95=115.0ms, peak_rss=4050 MB
+  rank 2: 605 patches/sec, batch_time p50=105.8ms p95=110.7ms, peak_rss=4120 MB
+  rank 3: 605 patches/sec, batch_time p50=105.9ms p95=111.2ms, peak_rss=4090 MB
 ```
 
 !!! note "The optimal `patches_per_visit` depends on your storage"
@@ -74,11 +74,12 @@ Per-rank detail (best config):
 
 ## Metrics
 
-The output includes three throughput metrics:
+The output includes throughput and memory metrics:
 
-- **effective**: `world_size * batch_size / max(rank_batch_p50)` — the actual DDP training step rate. In DDP, all ranks must synchronize at each backward pass, so throughput is limited by the slowest rank. This is the number that matters for training.
+- **effective**: `slowest_rank_throughput * world_size` — the actual DDP training rate. In DDP, all ranks synchronize at each backward pass, so the training rate is limited by the slowest rank. This is the number that matters for training.
 - **aggregate**: sum of per-rank throughputs. The theoretical maximum if ranks never waited for each other.
 - **slowest**: the throughput of the slowest rank. If this is much lower than the fastest, you have a straggler problem (likely caused by uneven slide sizes or storage hotspots).
+- **peak_rss**: peak resident set size (RAM) across the entire process tree (main process + all DataLoader workers). Use this to verify a config won't OOM on your machine.
 
 ## Throughput vs. training diversity
 

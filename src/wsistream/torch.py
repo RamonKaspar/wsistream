@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
@@ -64,105 +63,138 @@ def partition_slides_by_rank(
     return slides
 
 
-@dataclass
-class _StatsDelta:
-    """Raw mergeable stats delta pushed from a worker to the aggregator."""
-
-    slides_processed: int = 0
-    slides_failed: int = 0
-    patches_extracted: int = 0
-    patches_filtered: int = 0
-    error_count: int = 0
-    tf_count: int = 0
-    tf_total: float = 0.0
-    tf_min: float = float("inf")
-    tf_max: float = float("-inf")
-    mpp_counts: dict = field(default_factory=dict)
-    cancer_type_counts: dict = field(default_factory=dict)
-    sample_type_counts: dict = field(default_factory=dict)
-
-
 class _StatsAggregator:
-    """Aggregates stats deltas from multiple workers.
+    """Aggregates pipeline stats from multiple workers.
 
-    For ``num_workers=0`` (in-process), workers call ``merge()`` directly.
-    For ``num_workers>0``, workers ``push()`` deltas into a queue and the
-    main process drains it in ``to_dict()``.
+    Uses a hybrid approach:
+
+    - **Core counters** (slides, patches, tissue fractions): ``mp.Value``
+      shared memory objects.  Workers atomically add deltas.  Survives
+      worker shutdown, no pipe buffer, no Manager process.
+    - **Sparse histograms** (mpp counts, cancer/sample types):
+      ``mp.SimpleQueue``, flushed only on slide rotation (very infrequent).
+    - **num_workers=0**: direct Python operations, no IPC.
     """
 
     def __init__(self) -> None:
-        self._queue: mp.Queue = mp.Queue()
-        self._agg = _StatsDelta()
+        # Shared-memory counters (additive)
+        self._slides_processed = mp.Value("i", 0)
+        self._slides_failed = mp.Value("i", 0)
+        self._patches_extracted = mp.Value("i", 0)
+        self._patches_filtered = mp.Value("i", 0)
+        self._error_count = mp.Value("i", 0)
+        self._tf_count = mp.Value("i", 0)
+        self._tf_total = mp.Value("d", 0.0)
+        self._tf_min = mp.Value("d", float("inf"))
+        self._tf_max = mp.Value("d", float("-inf"))
+        # Sparse histogram queue (flushed per-slide, not per-patch)
+        self._histogram_queue: mp.SimpleQueue = mp.SimpleQueue()
+        # Main-process-only histogram accumulator
+        self._mpp_counts: dict = {}
+        self._cancer_type_counts: dict = {}
+        self._sample_type_counts: dict = {}
 
-    def merge(self, delta: _StatsDelta) -> None:
-        """Merge a delta directly (used for num_workers=0)."""
-        self._merge_into(delta)
+    def add_counters(
+        self,
+        slides_processed: int,
+        slides_failed: int,
+        patches_extracted: int,
+        patches_filtered: int,
+        error_count: int,
+        tf_count: int,
+        tf_total: float,
+        tf_min: float,
+        tf_max: float,
+    ) -> None:
+        """Atomically add counter deltas from a worker."""
+        with self._slides_processed.get_lock():
+            self._slides_processed.value += slides_processed
+        with self._slides_failed.get_lock():
+            self._slides_failed.value += slides_failed
+        with self._patches_extracted.get_lock():
+            self._patches_extracted.value += patches_extracted
+        with self._patches_filtered.get_lock():
+            self._patches_filtered.value += patches_filtered
+        with self._error_count.get_lock():
+            self._error_count.value += error_count
+        with self._tf_count.get_lock():
+            self._tf_count.value += tf_count
+        with self._tf_total.get_lock():
+            self._tf_total.value += tf_total
+        with self._tf_min.get_lock():
+            if tf_min < self._tf_min.value:
+                self._tf_min.value = tf_min
+        with self._tf_max.get_lock():
+            if tf_max > self._tf_max.value:
+                self._tf_max.value = tf_max
 
-    def push(self, delta: _StatsDelta) -> None:
-        """Push a delta into the queue (used for num_workers>0)."""
-        self._queue.put(delta)
+    def push_histograms(self, mpp: dict, cancer: dict, sample: dict) -> None:
+        """Push sparse histogram deltas (called per-slide, not per-patch)."""
+        self._histogram_queue.put((mpp, cancer, sample))
 
-    def _drain(self) -> None:
-        """Drain all pending items from the queue. Non-blocking."""
-        import queue as _queue_mod
-
-        while True:
+    def _drain_histograms(self) -> None:
+        """Drain sparse histogram queue into local accumulators."""
+        while not self._histogram_queue.empty():
             try:
-                delta = self._queue.get_nowait()
-            except (_queue_mod.Empty, EOFError):
+                mpp, cancer, sample = self._histogram_queue.get()
+            except EOFError:
                 break
-            self._merge_into(delta)
-
-    def _merge_into(self, delta: _StatsDelta) -> None:
-        a = self._agg
-        a.slides_processed += delta.slides_processed
-        a.slides_failed += delta.slides_failed
-        a.patches_extracted += delta.patches_extracted
-        a.patches_filtered += delta.patches_filtered
-        a.error_count += delta.error_count
-        a.tf_count += delta.tf_count
-        a.tf_total += delta.tf_total
-        if delta.tf_min < a.tf_min:
-            a.tf_min = delta.tf_min
-        if delta.tf_max > a.tf_max:
-            a.tf_max = delta.tf_max
-        for k, v in delta.mpp_counts.items():
-            a.mpp_counts[k] = a.mpp_counts.get(k, 0) + v
-        for k, v in delta.cancer_type_counts.items():
-            a.cancer_type_counts[k] = a.cancer_type_counts.get(k, 0) + v
-        for k, v in delta.sample_type_counts.items():
-            a.sample_type_counts[k] = a.sample_type_counts.get(k, 0) + v
+            for k, v in mpp.items():
+                self._mpp_counts[k] = self._mpp_counts.get(k, 0) + v
+            for k, v in cancer.items():
+                self._cancer_type_counts[k] = self._cancer_type_counts.get(k, 0) + v
+            for k, v in sample.items():
+                self._sample_type_counts[k] = self._sample_type_counts.get(k, 0) + v
 
     def to_dict(self) -> dict:
-        """Drain pending items and build the public flat stats dict."""
-        self._drain()
-        a = self._agg
+        """Build the public flat stats dict."""
+        self._drain_histograms()
+
         result: dict = {
-            "pipeline/slides_processed": a.slides_processed,
-            "pipeline/slides_failed": a.slides_failed,
-            "pipeline/patches_extracted": a.patches_extracted,
-            "pipeline/patches_filtered": a.patches_filtered,
+            "pipeline/slides_processed": self._slides_processed.value,
+            "pipeline/slides_failed": self._slides_failed.value,
+            "pipeline/patches_extracted": self._patches_extracted.value,
+            "pipeline/patches_filtered": self._patches_filtered.value,
         }
-        if a.tf_count > 0:
-            result["pipeline/mean_tissue_fraction"] = a.tf_total / a.tf_count
-            result["pipeline/min_tissue_fraction"] = a.tf_min
-            result["pipeline/max_tissue_fraction"] = a.tf_max
-        for mpp, count in a.mpp_counts.items():
+        tf_count = self._tf_count.value
+        if tf_count > 0:
+            result["pipeline/mean_tissue_fraction"] = self._tf_total.value / tf_count
+            result["pipeline/min_tissue_fraction"] = self._tf_min.value
+            result["pipeline/max_tissue_fraction"] = self._tf_max.value
+        for mpp, count in self._mpp_counts.items():
             key = f"pipeline/mpp_{mpp:.2f}" if mpp is not None else "pipeline/mpp_unknown"
             result[key] = count
-        for ct, count in a.cancer_type_counts.items():
+        for ct, count in self._cancer_type_counts.items():
             result[f"pipeline/cancer_type/{ct}"] = count
-        for st, count in a.sample_type_counts.items():
+        for st, count in self._sample_type_counts.items():
             safe = st.replace(" ", "_").lower()
             result[f"pipeline/sample_type/{safe}"] = count
-        if a.error_count > 0:
-            result["pipeline/error_count"] = a.error_count
+        error_count = self._error_count.value
+        if error_count > 0:
+            result["pipeline/error_count"] = error_count
         return result
 
     def reset(self) -> None:
         """Clear all aggregated stats."""
-        self._drain()
-        self._agg = _StatsDelta()
+        for v in (
+            self._slides_processed,
+            self._slides_failed,
+            self._patches_extracted,
+            self._patches_filtered,
+            self._error_count,
+            self._tf_count,
+            self._tf_total,
+        ):
+            with v.get_lock():
+                v.value = 0
+        with self._tf_min.get_lock():
+            self._tf_min.value = float("inf")
+        with self._tf_max.get_lock():
+            self._tf_max.value = float("-inf")
+        self._drain_histograms()
+        self._mpp_counts.clear()
+        self._cancer_type_counts.clear()
+        self._sample_type_counts.clear()
 
 
 class WsiStreamDataset(IterableDataset):
@@ -294,74 +326,126 @@ class WsiStreamDataset(IterableDataset):
             seed=worker_seed,
         )
 
-        use_queue = worker_info is not None
-        flush_interval = 16 if use_queue else 1
+        use_multiworker = worker_info is not None
+        flush_interval = 16 if use_multiworker else 1
 
-        prev = _StatsDelta()
+        prev_counters = [0, 0, 0, 0, 0, 0, 0.0]  # sp, sf, pe, pf, ec, tfc, tft
+        prev_slides_total = 0
+        prev_mpp: dict = {}
+        prev_cancer: dict = {}
+        prev_sample: dict = {}
         patch_count = 0
+
         try:
             for result in pipeline:
                 patch_count += 1
                 if patch_count % flush_interval == 0:
-                    self._flush_stats(pipeline, prev, use_queue)
+                    prev_counters, prev_slides_total, prev_mpp, prev_cancer, prev_sample = (
+                        self._flush_stats(
+                            pipeline,
+                            prev_counters,
+                            prev_slides_total,
+                            prev_mpp,
+                            prev_cancer,
+                            prev_sample,
+                        )
+                    )
                 yield self._result_to_dict(result)
         finally:
-            self._flush_stats(pipeline, prev, use_queue)
+            prev_counters, _, prev_mpp, prev_cancer, prev_sample = self._flush_stats(
+                pipeline,
+                prev_counters,
+                prev_slides_total,
+                prev_mpp,
+                prev_cancer,
+                prev_sample,
+            )
+            # Force-push any remaining histogram deltas (mpp from last patches)
+            s = pipeline.stats
+            mpp_delta = {}
+            for k, v in s.magnification_counts.items():
+                d = v - prev_mpp.get(k, 0)
+                if d:
+                    mpp_delta[k] = d
+            cancer_delta = {}
+            for k, v in s.cancer_type_counts.items():
+                d = v - prev_cancer.get(k, 0)
+                if d:
+                    cancer_delta[k] = d
+            sample_delta = {}
+            for k, v in s.sample_type_counts.items():
+                d = v - prev_sample.get(k, 0)
+                if d:
+                    sample_delta[k] = d
+            if mpp_delta or cancer_delta or sample_delta:
+                self._shared_stats.push_histograms(mpp_delta, cancer_delta, sample_delta)
 
     def _flush_stats(
         self,
         pipeline: PatchPipeline,
-        prev: _StatsDelta,
-        use_queue: bool,
-    ) -> None:
-        """Compute delta from raw pipeline stats and send to aggregator."""
+        prev_counters: list,
+        prev_slides_total: int,
+        prev_mpp: dict,
+        prev_cancer: dict,
+        prev_sample: dict,
+    ) -> tuple:
+        """Compute deltas from pipeline stats and push to shared aggregator."""
         s = pipeline.stats
         tf = s.tissue_fractions
 
-        delta = _StatsDelta(
-            slides_processed=s.slides_processed - prev.slides_processed,
-            slides_failed=s.slides_failed - prev.slides_failed,
-            patches_extracted=s.patches_extracted - prev.patches_extracted,
-            patches_filtered=s.patches_filtered - prev.patches_filtered,
-            error_count=s.error_count - prev.error_count,
-            tf_count=tf.count - prev.tf_count,
-            tf_total=tf.total - prev.tf_total,
-            tf_min=tf.min_val,
-            tf_max=tf.max_val,
-        )
+        # Current counter values
+        cur = [
+            s.slides_processed,
+            s.slides_failed,
+            s.patches_extracted,
+            s.patches_filtered,
+            s.error_count,
+            tf.count,
+            tf.total,
+        ]
 
-        # Diff the histogram dicts
-        for mpp, count in s.magnification_counts.items():
-            d = count - prev.mpp_counts.get(mpp, 0)
-            if d:
-                delta.mpp_counts[mpp] = d
-        for ct, count in s.cancer_type_counts.items():
-            d = count - prev.cancer_type_counts.get(ct, 0)
-            if d:
-                delta.cancer_type_counts[ct] = d
-        for st, count in s.sample_type_counts.items():
-            d = count - prev.sample_type_counts.get(st, 0)
-            if d:
-                delta.sample_type_counts[st] = d
+        # Compute deltas
+        deltas = [c - p for c, p in zip(cur, prev_counters)]
+        d_sp, d_sf, d_pe, d_pf, d_ec, d_tfc, d_tft = deltas
 
-        if use_queue:
-            self._shared_stats.push(delta)
-        else:
-            self._shared_stats.merge(delta)
+        if any(d != 0 for d in deltas):
+            self._shared_stats.add_counters(
+                slides_processed=d_sp,
+                slides_failed=d_sf,
+                patches_extracted=d_pe,
+                patches_filtered=d_pf,
+                error_count=d_ec,
+                tf_count=d_tfc,
+                tf_total=d_tft,
+                tf_min=tf.min_val,
+                tf_max=tf.max_val,
+            )
 
-        # Update prev snapshot
-        prev.slides_processed = s.slides_processed
-        prev.slides_failed = s.slides_failed
-        prev.patches_extracted = s.patches_extracted
-        prev.patches_filtered = s.patches_filtered
-        prev.error_count = s.error_count
-        prev.tf_count = tf.count
-        prev.tf_total = tf.total
-        prev.tf_min = tf.min_val
-        prev.tf_max = tf.max_val
-        prev.mpp_counts = dict(s.magnification_counts)
-        prev.cancer_type_counts = dict(s.cancer_type_counts)
-        prev.sample_type_counts = dict(s.sample_type_counts)
+        # Push histogram deltas only when slide count changes (infrequent)
+        cur_slides_total = s.slides_processed + s.slides_failed
+        if cur_slides_total > prev_slides_total:
+            mpp_delta = {}
+            for k, v in s.magnification_counts.items():
+                d = v - prev_mpp.get(k, 0)
+                if d:
+                    mpp_delta[k] = d
+            cancer_delta = {}
+            for k, v in s.cancer_type_counts.items():
+                d = v - prev_cancer.get(k, 0)
+                if d:
+                    cancer_delta[k] = d
+            sample_delta = {}
+            for k, v in s.sample_type_counts.items():
+                d = v - prev_sample.get(k, 0)
+                if d:
+                    sample_delta[k] = d
+            if mpp_delta or cancer_delta or sample_delta:
+                self._shared_stats.push_histograms(mpp_delta, cancer_delta, sample_delta)
+            prev_mpp = dict(s.magnification_counts)
+            prev_cancer = dict(s.cancer_type_counts)
+            prev_sample = dict(s.sample_type_counts)
+
+        return list(cur), cur_slides_total, prev_mpp, prev_cancer, prev_sample
 
     @staticmethod
     def _result_to_dict(result: PatchResult) -> dict:

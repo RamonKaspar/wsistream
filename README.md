@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="https://github.com/RamonKaspar/wsistream/blob/main/docs/assets/logo.svg" alt="wsistream" width="450">
+    <img src="https://raw.githubusercontent.com/RamonKaspar/wsistream/main/docs/assets/logo.svg" alt="wsistream" width="450">
 </p>
 
 <p align="center">

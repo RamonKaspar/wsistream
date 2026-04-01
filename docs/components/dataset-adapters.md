@@ -71,13 +71,14 @@ paths = download_tcga_slides(
     manifest,
     output_dir="/data/tcga",       # saves as /data/tcga/TCGA-BRCA/file.svs
     organize_by="cancer_type",     # or "flat" for all files in one directory
-    skip_existing=True,            # resume interrupted downloads
+    skip_existing=True,            # skip already-downloaded files
     max_workers=4,                 # parallel download threads
 )
 ```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
+| `manifest` | list[dict] | required | File records returned by `query_tcga_slides`. |
 | `output_dir` | str or Path | required | Root directory to save slides into. |
 | `organize_by` | str | `"cancer_type"` | `"cancer_type"` creates subdirectories; `"flat"` puts everything in `output_dir/`. |
 | `skip_existing` | bool | `True` | Skip files that already exist with matching size. |

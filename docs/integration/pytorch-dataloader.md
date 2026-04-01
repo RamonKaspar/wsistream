@@ -28,7 +28,7 @@ dataset = WsiStreamDataset(
 loader = DataLoader(dataset, batch_size=64, num_workers=4, pin_memory=True)
 
 for batch in loader:
-    images = batch["image"]            # (B, 3, H, W) float32 in [0, 1]
+    images = batch["image"]            # (B, 3, H, W) float32
     x = batch["x"]                     # (B,) int — level-0 x coordinates
     y = batch["y"]                     # (B,) int — level-0 y coordinates
     mpp = batch["mpp"]                 # (B,) float — microns/px, -1.0 if unavailable
@@ -37,7 +37,10 @@ for batch in loader:
     patient = batch["patient_id"]      # list[str], length B (empty if no adapter)
 ```
 
-Each batch is a dict of primitives and tensors. Image conversion (HWC uint8 → CHW float32, divided by 255) is handled internally.
+Each batch is a dict of primitives and tensors. Image conversion (HWC uint8 → CHW float32, divided by 255) is handled internally. If a `NormalizeTransform` is included in the transforms chain, the image is already float32 and is passed through without re-scaling — values will reflect the normalization (e.g., roughly `[-2, 3]` for ImageNet stats), not `[0, 1]`.
+
+!!! note "Default slide ordering"
+    `WsiStreamDataset` defaults to `slide_sampling="random"` (better for training diversity), while `PatchPipeline` defaults to `"sequential"`. If you need deterministic slide order through the dataset wrapper, pass `slide_sampling="sequential"` explicitly.
 
 ## Why IterableDataset, not Dataset?
 

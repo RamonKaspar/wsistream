@@ -8,6 +8,7 @@ For non-PyTorch workflows or custom training loops:
 
 ```python
 import wandb
+from wsistream.datasets import TCGAAdapter
 from wsistream.pipeline import PatchPipeline
 
 wandb.init(project="pathology-fm")

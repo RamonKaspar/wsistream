@@ -12,7 +12,7 @@ from wsistream.backends import OpenSlideBackend
 backend = OpenSlideBackend()
 ```
 
-Requires the OpenSlide C library installed on the system:
+The `openslide` extra installs `openslide-bin`, which provides the OpenSlide C library automatically on most platforms. If that fails, install manually:
 
 - Ubuntu/Debian: `apt-get install openslide-tools`
 - macOS: `brew install openslide`

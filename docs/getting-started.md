@@ -18,8 +18,8 @@ Available extras:
 | `all` | Both backends + torch + albumentations + matplotlib |
 | `dev` | Everything in `all` + pytest, ruff, mypy, mkdocs-material |
 
-!!! note "System dependency for OpenSlide"
-    If using the OpenSlide backend, you need the C library installed:
+!!! note "OpenSlide C library"
+    The `openslide` extra installs `openslide-bin`, which provides the OpenSlide C library automatically on most platforms. If that fails, install manually:
 
     - Ubuntu/Debian: `apt-get install openslide-tools`
     - macOS: `brew install openslide`

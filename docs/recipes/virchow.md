@@ -50,7 +50,7 @@ pipeline = PatchPipeline(
 
 | Step | Paper | wsistream | Match |
 |------|-------|-----------|-------|
-| Tissue detection | HSV per-pixel filtering at 16x downsample | `HSVTissueDetector` with same ranges | Exact (ranges match; downsample is handled automatically by the pipeline's `thumbnail_size`) |
+| Tissue detection | HSV per-pixel filtering at 16x downsample | `HSVTissueDetector` with same ranges | Approximate (HSV ranges match; downsample is determined by `thumbnail_size`, not a fixed 16x factor) |
 | Tissue threshold | 25% | `tissue_threshold=0.25` | Exact |
 | Magnification | 20x (0.5 um/px) | `target_mpp=0.5` | Exact |
 | Patch size | 224x224 | `patch_size=224` | Exact |

@@ -57,7 +57,7 @@ def main():
         slide_paths=my_slides,
         backend=OpenSlideBackend(),
         tissue_detector=OtsuTissueDetector(),
-        sampler=RandomSampler(patch_size=256, num_patches=1000, target_mpp=0.5),
+        sampler=RandomSampler(patch_size=256, target_mpp=0.5),
         pool_size=8,
         patches_per_slide=100,
         seed=42 + rank,

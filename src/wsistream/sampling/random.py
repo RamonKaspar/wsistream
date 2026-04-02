@@ -26,7 +26,8 @@ class RandomSampler(PatchSampler):
     patch_size : int
         Width and height at the target level.
     num_patches : int
-        Patches per slide. -1 for infinite streaming.
+        Patches per slide. -1 (default) for infinite streaming;
+        the pipeline's ``patches_per_slide`` controls the budget.
     level : int
         Pyramid level to sample from. Ignored when ``target_mpp`` is set.
     target_mpp : float or None
@@ -42,7 +43,7 @@ class RandomSampler(PatchSampler):
     """
 
     patch_size: int = 256
-    num_patches: int = 100
+    num_patches: int = -1
     level: int = 0
     target_mpp: float | None = None
     tissue_threshold: float = 0.4

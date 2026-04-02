@@ -20,7 +20,7 @@ dataset = WsiStreamDataset(
     slide_paths=slide_paths,
     backend=OpenSlideBackend(),
     tissue_detector=OtsuTissueDetector(),
-    sampler=RandomSampler(patch_size=256, num_patches=1000, target_mpp=0.5),
+    sampler=RandomSampler(patch_size=256, target_mpp=0.5),
     pool_size=8,
     patches_per_slide=100,
 )

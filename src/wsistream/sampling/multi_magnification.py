@@ -33,7 +33,8 @@ class MultiMagnificationSampler(PatchSampler):
     patch_size : int
         Patch width/height at the target level.
     num_patches : int
-        Total patches to yield. -1 for infinite.
+        Total patches to yield. -1 (default) for infinite streaming;
+        the pipeline's ``patches_per_slide`` controls the budget.
     tissue_threshold : float
         Minimum tissue fraction.
     max_consecutive_failures : int
@@ -47,7 +48,7 @@ class MultiMagnificationSampler(PatchSampler):
     target_mpps: list[float] = field(default_factory=lambda: [0.25, 0.5, 1.0, 2.0])
     mpp_weights: list[float] | None = None
     patch_size: int = 256
-    num_patches: int = 100
+    num_patches: int = -1
     tissue_threshold: float = 0.4
     max_consecutive_failures: int = 100
     seed: int | None = None

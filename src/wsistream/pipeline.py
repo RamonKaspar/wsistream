@@ -67,6 +67,7 @@ class PipelineStats:
 
     slides_processed: int = 0
     slides_failed: int = 0
+    slides_seen: set = field(default_factory=set)
     patches_extracted: int = 0
     patches_filtered: int = 0
     tissue_fractions: _TissueFractionStats = field(default_factory=_TissueFractionStats)
@@ -86,6 +87,7 @@ class PipelineStats:
         result = {
             "pipeline/slides_processed": self.slides_processed,
             "pipeline/slides_failed": self.slides_failed,
+            "pipeline/slides_unique": len(self.slides_seen),
             "pipeline/patches_extracted": self.patches_extracted,
             "pipeline/patches_filtered": self.patches_filtered,
         }
@@ -485,6 +487,7 @@ class PatchPipeline:
 
             # Only count as processed after full setup succeeds
             self._stats.slides_processed += 1
+            self._stats.slides_seen.add(slide_path)
             self._stats.tissue_fractions.update(tissue_mask.tissue_fraction)
             if metadata is not None:
                 if metadata.cancer_type:

@@ -201,6 +201,29 @@ class TestPipelineIteration:
         assert pipeline.stats.slides_processed == 2
         assert pipeline.stats.patches_extracted == 10
 
+    def test_slides_unique_without_cycle(self):
+        """Without cycling, unique == processed."""
+        pipeline = _make_pipeline(n_slides=3, patches_per_slide=5, cycle=False)
+        list(pipeline)
+        assert len(pipeline.stats.slides_seen) == 3
+        assert pipeline.stats.slides_processed == 3
+        d = pipeline.stats.to_dict()
+        assert d["pipeline/slides_unique"] == 3
+
+    def test_slides_unique_with_cycle(self):
+        """With cycling, unique < processed because slides are revisited."""
+        pipeline = _make_pipeline(n_slides=2, patches_per_slide=3, cycle=True)
+        count = 0
+        for _ in pipeline:
+            count += 1
+            if count >= 18:  # 3 passes × 2 slides × 3 patches
+                break
+        assert len(pipeline.stats.slides_seen) == 2
+        assert pipeline.stats.slides_processed >= 6  # 2 slides × 3 passes
+        d = pipeline.stats.to_dict()
+        assert d["pipeline/slides_unique"] == 2
+        assert d["pipeline/slides_processed"] >= 6
+
     def test_empty_slide_paths(self):
         pipeline = _make_pipeline(n_slides=0)
         patches = list(pipeline)

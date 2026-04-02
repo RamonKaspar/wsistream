@@ -33,6 +33,7 @@ pipeline.stats_dict()
 # {
 #     "pipeline/slides_processed": 42,
 #     "pipeline/slides_failed": 1,
+#     "pipeline/slides_unique": 40,
 #     "pipeline/patches_extracted": 4200,
 #     "pipeline/patches_filtered": 380,
 #     "pipeline/mean_tissue_fraction": 0.63,
@@ -57,8 +58,9 @@ For programmatic access to raw data, use the `stats` property:
 ```python
 stats = pipeline.stats
 
-stats.slides_processed            # int
+stats.slides_processed            # int — total opens (includes revisits)
 stats.slides_failed               # int
+stats.slides_seen                 # set[str] — unique slide paths seen
 stats.patches_extracted           # int
 stats.patches_filtered            # int (rejected by PatchFilter)
 stats.tissue_fractions.count      # int — number of slides

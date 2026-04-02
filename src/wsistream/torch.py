@@ -89,7 +89,8 @@ class _StatsAggregator:
         self._tf_max = mp.Value("d", float("-inf"))
         # Sparse histogram queue (flushed per-slide, not per-patch)
         self._histogram_queue: mp.SimpleQueue = mp.SimpleQueue()
-        # Main-process-only histogram accumulator
+        # Main-process-only accumulators
+        self._slides_seen: set[str] = set()
         self._mpp_counts: dict = {}
         self._cancer_type_counts: dict = {}
         self._sample_type_counts: dict = {}
@@ -128,17 +129,20 @@ class _StatsAggregator:
             if tf_max > self._tf_max.value:
                 self._tf_max.value = tf_max
 
-    def push_histograms(self, mpp: dict, cancer: dict, sample: dict) -> None:
-        """Push sparse histogram deltas (called per-slide, not per-patch)."""
-        self._histogram_queue.put((mpp, cancer, sample))
+    def push_histograms(
+        self, slide_paths: list[str], mpp: dict, cancer: dict, sample: dict
+    ) -> None:
+        """Push sparse histogram deltas and slide paths (called per-slide, not per-patch)."""
+        self._histogram_queue.put((slide_paths, mpp, cancer, sample))
 
     def _drain_histograms(self) -> None:
         """Drain sparse histogram queue into local accumulators."""
         while not self._histogram_queue.empty():
             try:
-                mpp, cancer, sample = self._histogram_queue.get()
+                slide_paths, mpp, cancer, sample = self._histogram_queue.get()
             except EOFError:
                 break
+            self._slides_seen.update(slide_paths)
             for k, v in mpp.items():
                 self._mpp_counts[k] = self._mpp_counts.get(k, 0) + v
             for k, v in cancer.items():
@@ -153,6 +157,7 @@ class _StatsAggregator:
         result: dict = {
             "pipeline/slides_processed": self._slides_processed.value,
             "pipeline/slides_failed": self._slides_failed.value,
+            "pipeline/slides_unique": len(self._slides_seen),
             "pipeline/patches_extracted": self._patches_extracted.value,
             "pipeline/patches_filtered": self._patches_filtered.value,
         }
@@ -192,6 +197,7 @@ class _StatsAggregator:
         with self._tf_max.get_lock():
             self._tf_max.value = float("-inf")
         self._drain_histograms()
+        self._slides_seen.clear()
         self._mpp_counts.clear()
         self._cancer_type_counts.clear()
         self._sample_type_counts.clear()
@@ -331,6 +337,7 @@ class WsiStreamDataset(IterableDataset):
 
         prev_counters = [0, 0, 0, 0, 0, 0, 0.0]  # sp, sf, pe, pf, ec, tfc, tft
         prev_slides_total = 0
+        prev_slides_seen: set[str] = set()
         prev_mpp: dict = {}
         prev_cancer: dict = {}
         prev_sample: dict = {}
@@ -340,28 +347,38 @@ class WsiStreamDataset(IterableDataset):
             for result in pipeline:
                 patch_count += 1
                 if patch_count % flush_interval == 0:
-                    prev_counters, prev_slides_total, prev_mpp, prev_cancer, prev_sample = (
-                        self._flush_stats(
-                            pipeline,
-                            prev_counters,
-                            prev_slides_total,
-                            prev_mpp,
-                            prev_cancer,
-                            prev_sample,
-                        )
+                    (
+                        prev_counters,
+                        prev_slides_total,
+                        prev_slides_seen,
+                        prev_mpp,
+                        prev_cancer,
+                        prev_sample,
+                    ) = self._flush_stats(
+                        pipeline,
+                        prev_counters,
+                        prev_slides_total,
+                        prev_slides_seen,
+                        prev_mpp,
+                        prev_cancer,
+                        prev_sample,
                     )
                 yield self._result_to_dict(result)
         finally:
-            prev_counters, _, prev_mpp, prev_cancer, prev_sample = self._flush_stats(
-                pipeline,
-                prev_counters,
-                prev_slides_total,
-                prev_mpp,
-                prev_cancer,
-                prev_sample,
+            prev_counters, _, prev_slides_seen, prev_mpp, prev_cancer, prev_sample = (
+                self._flush_stats(
+                    pipeline,
+                    prev_counters,
+                    prev_slides_total,
+                    prev_slides_seen,
+                    prev_mpp,
+                    prev_cancer,
+                    prev_sample,
+                )
             )
             # Force-push any remaining histogram deltas (mpp from last patches)
             s = pipeline.stats
+            new_slides = list(s.slides_seen - prev_slides_seen)
             mpp_delta = {}
             for k, v in s.magnification_counts.items():
                 d = v - prev_mpp.get(k, 0)
@@ -377,14 +394,17 @@ class WsiStreamDataset(IterableDataset):
                 d = v - prev_sample.get(k, 0)
                 if d:
                     sample_delta[k] = d
-            if mpp_delta or cancer_delta or sample_delta:
-                self._shared_stats.push_histograms(mpp_delta, cancer_delta, sample_delta)
+            if new_slides or mpp_delta or cancer_delta or sample_delta:
+                self._shared_stats.push_histograms(
+                    new_slides, mpp_delta, cancer_delta, sample_delta
+                )
 
     def _flush_stats(
         self,
         pipeline: PatchPipeline,
         prev_counters: list,
         prev_slides_total: int,
+        prev_slides_seen: set,
         prev_mpp: dict,
         prev_cancer: dict,
         prev_sample: dict,
@@ -421,9 +441,10 @@ class WsiStreamDataset(IterableDataset):
                 tf_max=tf.max_val,
             )
 
-        # Push histogram deltas only when slide count changes (infrequent)
+        # Push histogram deltas and new slide paths only when slide count changes
         cur_slides_total = s.slides_processed + s.slides_failed
         if cur_slides_total > prev_slides_total:
+            new_slides = list(s.slides_seen - prev_slides_seen)
             mpp_delta = {}
             for k, v in s.magnification_counts.items():
                 d = v - prev_mpp.get(k, 0)
@@ -439,13 +460,16 @@ class WsiStreamDataset(IterableDataset):
                 d = v - prev_sample.get(k, 0)
                 if d:
                     sample_delta[k] = d
-            if mpp_delta or cancer_delta or sample_delta:
-                self._shared_stats.push_histograms(mpp_delta, cancer_delta, sample_delta)
+            if new_slides or mpp_delta or cancer_delta or sample_delta:
+                self._shared_stats.push_histograms(
+                    new_slides, mpp_delta, cancer_delta, sample_delta
+                )
+            prev_slides_seen = set(s.slides_seen)
             prev_mpp = dict(s.magnification_counts)
             prev_cancer = dict(s.cancer_type_counts)
             prev_sample = dict(s.sample_type_counts)
 
-        return list(cur), cur_slides_total, prev_mpp, prev_cancer, prev_sample
+        return list(cur), cur_slides_total, prev_slides_seen, prev_mpp, prev_cancer, prev_sample
 
     @staticmethod
     def _result_to_dict(result: PatchResult) -> dict:

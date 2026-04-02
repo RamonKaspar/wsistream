@@ -221,6 +221,19 @@ class TestSharedStats:
         list(dataset)
         assert dataset.stats_dict()["pipeline/patches_extracted"] == 10
 
+    def test_slides_unique_stable_across_iterations(self):
+        """Repeated iteration over the same slides must not inflate slides_unique."""
+        dataset = _make_dataset(n_slides=3, patches_per_slide=5)
+        list(dataset)
+        stats1 = dataset.stats_dict()
+        assert stats1["pipeline/slides_unique"] == 3
+        assert stats1["pipeline/slides_processed"] == 3
+
+        list(dataset)
+        stats2 = dataset.stats_dict()
+        assert stats2["pipeline/slides_unique"] == 3  # still 3, not 6
+        assert stats2["pipeline/slides_processed"] == 6  # 3 + 3
+
 
 # ── Re-iteration seed diversity ──
 

@@ -69,6 +69,46 @@ sampler = MultiMagnificationSampler(
 !!! note "MPP metadata"
     Multi-magnification sampling requires that the slide file contains microns-per-pixel (MPP) metadata. Most TCGA SVS files include this. If MPP is unavailable, the sampler falls back to single-level (level 0) sampling with a `RandomSampler`.
 
+## ContinuousMagnificationSampler
+
+Instead of restricting training to a fixed set of scanner magnifications, this sampler synthesises patches at **arbitrary magnifications** via dynamic crop-and-resize operations. It reads a larger crop from the WSI and resizes it to `output_size`, producing patches at a continuously varying µm/px. The paper shows this eliminates the performance gaps at intermediate magnifications (up to +4 pp balanced accuracy) that are observed with discrete multi-scale sampling.
+
+Based on [Möllers et al. (2026), "Mind the Gap: Continuous Magnification Sampling for Pathology Foundation Models"](https://arxiv.org/abs/2601.02198).
+
+<figure markdown="span">
+  ![Continuous vs discrete magnification](../assets/continuous_magnification.svg)
+  <figcaption>Same tissue location viewed at seven magnifications. Continuous sampling (top) covers the full spectrum; discrete sampling (bottom) leaves gaps at intermediate scales (0.375, 0.75, 1.5 µm/px).</figcaption>
+</figure>
+
+```python
+from wsistream.sampling import ContinuousMagnificationSampler
+
+sampler = ContinuousMagnificationSampler(
+    output_size=224,                     # final patch size (resize is automatic)
+    mpp_range=(0.25, 2.0),              # continuous um/px range
+    distribution="uniform",              # "uniform", "maxavg", or "minmax"
+    lambda_maxavg=1.0,                   # entropy regularisation (maxavg only)
+    num_patches=-1,                      # -1 for infinite
+    tissue_threshold=0.4,
+    max_retries=50,
+    seed=42,
+)
+```
+
+**Three distribution modes:**
+
+| Mode | Description | Best for |
+|---|---|---|
+| `"uniform"` | Uniform over mpp_range | General-purpose, simple baseline |
+| `"maxavg"` | Entropy-regularised softmax over transfer potential; concentrates on central magnifications | Maximising average representation quality |
+| `"minmax"` | LP-optimised to maximise worst-case quality; oversamples boundary magnifications. Requires `scipy`. | Robust representations at all magnifications |
+
+!!! note "Automatic resize"
+    Unlike other samplers, `ContinuousMagnificationSampler` reads variable-sized crops and the pipeline **automatically resizes** them to `output_size`. You do **not** need to add a `ResizeTransform` to your transform chain.
+
+!!! note "MPP metadata"
+    Continuous magnification sampling requires that the slide file contains microns-per-pixel (MPP) metadata. If MPP is unavailable, the sampler falls back to single-level (level 0) sampling with a `RandomSampler`, using `output_size` as `patch_size`.
+
 ## Writing your own
 
 ```python

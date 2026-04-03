@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+import cv2
+
 import numpy as np
 
 from wsistream.backends.base import SlideBackend
@@ -259,6 +261,11 @@ class PatchPipeline:
         slide_queue: deque[str] = deque(self._get_slide_order())
         pool: list[_PoolEntry] = []
 
+        # If the sampler requests a fixed output size (e.g.
+        # ContinuousMagnificationSampler crop-and-resize), resize every
+        # patch after reading but before filter / transforms.
+        _sampler_output_size: int | None = getattr(self.sampler, "output_size", None)
+
         self._fill_pool(pool, slide_queue)
         if not pool:
             return
@@ -316,6 +323,18 @@ class PatchPipeline:
                 # This prevents infinite loops when a filter rejects everything.
                 entry.patch_count += 1
                 entry.successful_reads += 1
+
+                # Crop-and-resize: if the sampler specifies an output size
+                # (e.g. ContinuousMagnificationSampler), resize the patch
+                # so the filter and transforms see the final resolution.
+                if _sampler_output_size is not None and (
+                    patch.shape[0] != _sampler_output_size or patch.shape[1] != _sampler_output_size
+                ):
+                    patch = cv2.resize(
+                        patch,
+                        (_sampler_output_size, _sampler_output_size),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
 
                 # Per-tile quality filter (e.g., HSV pixel check)
                 if self.patch_filter is not None and not self.patch_filter.accept(patch):

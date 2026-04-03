@@ -8,7 +8,13 @@ from wsistream.backends import OpenSlideBackend, SlideBackend, TiffSlideBackend
 from wsistream.datasets import DatasetAdapter, TCGAAdapter
 from wsistream.filters import HSVPatchFilter, PatchFilter
 from wsistream.pipeline import PatchPipeline
-from wsistream.sampling import GridSampler, MultiMagnificationSampler, PatchSampler, RandomSampler
+from wsistream.sampling import (
+    ContinuousMagnificationSampler,
+    GridSampler,
+    MultiMagnificationSampler,
+    PatchSampler,
+    RandomSampler,
+)
 from wsistream.slide import SlideHandle
 from wsistream.tissue import (
     CLAMTissueDetector,
@@ -53,6 +59,7 @@ __all__ = [
     "RandomSampler",
     "GridSampler",
     "MultiMagnificationSampler",
+    "ContinuousMagnificationSampler",
     # Filters
     "PatchFilter",
     "HSVPatchFilter",

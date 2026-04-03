@@ -33,5 +33,8 @@ data/
 # Demo output
 wsistream_demo_output/
 
+# Generated figures (SVGs are tracked; PNGs are large duplicates)
+docs/assets/*.png
+
 # MkDocs build
 site/

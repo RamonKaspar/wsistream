@@ -95,6 +95,46 @@ transform = AlbumentationsWrapper(A.Compose([
 ]))
 ```
 
+### Stain augmentation via albumentations
+
+Albumentations (>= 2.0) includes a built-in [`HEStain`](https://explore.albumentations.ai/transform/HEStain) transform that performs Macenko or Vahadane stain augmentation — decomposing the image into stain concentration channels, randomly perturbing them, and reconstructing. This is a more principled alternative to `HEDColorAugmentation` for simulating staining variation across labs and scanners.
+
+```python
+import albumentations as A
+from wsistream.transforms import AlbumentationsWrapper
+
+# Macenko-based stain augmentation
+transform = AlbumentationsWrapper(A.Compose([
+    A.HEStain(
+        method="macenko",
+        intensity_scale_range=(0.7, 1.3),   # multiplicative perturbation per stain channel
+        intensity_shift_range=(-0.2, 0.2),  # additive perturbation per stain channel
+        augment_background=False,
+        p=0.5,
+    ),
+]))
+
+# Vahadane-based (better structure preservation)
+transform = AlbumentationsWrapper(A.Compose([
+    A.HEStain(method="vahadane", p=0.5),
+]))
+
+# Random preset (fastest -- uses predefined stain matrices, no per-image SVD)
+transform = AlbumentationsWrapper(A.Compose([
+    A.HEStain(method="random_preset", p=0.5),
+]))
+```
+
+The two key parameters controlling augmentation strength are:
+
+- **`intensity_scale_range`** (default `(0.7, 1.3)`): multiplicative scaling per stain channel. Narrower range = subtler color variation.
+- **`intensity_shift_range`** (default `(-0.2, 0.2)`): additive shift per stain channel. Controls baseline staining variation.
+
+<figure markdown="span">
+  ![Stain augmentation comparison](../assets/stain_augmentation.svg)
+  <figcaption>Comparison of stain augmentation methods. Each group shows the original patch followed by three augmented versions. All methods use default parameters (intensity_scale_range=(0.7, 1.3), intensity_shift_range=(-0.2, 0.2), p=1.0).</figcaption>
+</figure>
+
 ## Composing transforms
 
 Use `ComposeTransforms` to chain multiple transforms. They are applied in order.

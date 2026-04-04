@@ -4,11 +4,12 @@ wsistream can approximate the data pipelines of several pathology foundation mod
 
 | Paper | Patch size | Resolution | Tissue detection | Tissue threshold | Training data |
 |-------|-----------|------------|-----------------|-----------------|---------------|
-| [Midnight](midnight.md) | 256x256 | 0.25, 0.5, 1.0, 2.0 mpp | HSV filtering | 40% | 3B+ tiles from 423K WSIs |
-| [UNI](uni.md) | 256x256 | 20x (0.5 mpp) | CLAM | 40% | ~100M tiles from 100K WSIs |
-| [Virchow](virchow.md) | 224x224 | 20x (0.5 mpp) | HSV filtering | 25% | 1.5M WSIs |
-| [GPFM](gpfm.md) | 512x512 | Native (level 0) | CLAM | 40% | 190M tiles from 72K WSIs |
-| [Prov-GigaPath](prov-gigapath.md) | 256x256 | 20x (0.5 mpp) | Otsu | 10% | 1.38B tiles from 171K WSIs |
+| [Midnight](midnight.md) | 256x256 | 0.25, 0.5, 1.0, 2.0 mpp | U-Net (not open-sourced) | 40% | 384M tiles from 92K WSIs |
+| [UNI](uni.md) | 256x256 / 512x512 | 20x (0.5 mpp) | CLAM | not specified | ~100M tiles from 100K WSIs |
+| [Virchow](virchow.md) | 392x392 | 5x/10x/20x/40x mixed | Trained FCN (not open-sourced) | 65% | 3.1M WSIs |
+| [GPFM](gpfm.md) | 512x512 | Native (level 0) | CLAM (dataset-specific presets) | contour-based | 190M tiles from 72K WSIs |
+| [Prov-GigaPath](prov-gigapath.md) | 256x256 | 20x (0.5 mpp) | Otsu on luminance | 10% | 1.38B tiles from 171K WSIs |
+| [Phikon](phikon.md) | 224x224 | 20x (0.5 mpp) | U-Net (not open-sourced) | 60% | 456M tiles from 58K WSIs |
 
 <figure markdown="span">
   ![Recipe comparison](../assets/recipe_comparison.svg)

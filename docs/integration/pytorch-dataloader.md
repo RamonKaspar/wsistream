@@ -42,6 +42,9 @@ Each batch is a dict of primitives and tensors. Image conversion (HWC uint8 → 
 !!! note "Default slide ordering"
     `WsiStreamDataset` defaults to `slide_sampling="random"` (better for training diversity), while `PatchPipeline` defaults to `"sequential"`. If you need deterministic slide order through the dataset wrapper, pass `slide_sampling="sequential"` explicitly.
 
+!!! note "Deterministic validation"
+    If you want the same validation patches every time, use a fixed `seed`, `slide_sampling="sequential"`, `cycle=False`, and `num_workers=0` on the validation `DataLoader`. With `num_workers>0`, `PatchPipeline` mixes the worker PID into RNG seeds so repeated validation runs are not bit-exact across calls.
+
 ## Why IterableDataset, not Dataset?
 
 A map-style [`Dataset`](https://pytorch.org/docs/stable/data.html#map-style-datasets) requires `__len__` and `__getitem__`. Online patching is inherently stochastic -- there is no fixed set of patches to index. [`IterableDataset`](https://pytorch.org/docs/stable/data.html#iterable-style-datasets) streams lazily, which is what online patching needs. See the [PyTorch data loading docs](https://pytorch.org/docs/stable/data.html) for background on the two dataset styles.

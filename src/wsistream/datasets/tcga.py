@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from wsistream.datasets.base import DatasetAdapter
 from wsistream.types import SlideMetadata
@@ -72,12 +72,26 @@ class TCGAAdapter(DatasetAdapter):
     """
 
     cancer_type: str | None = None
+    _warned_no_barcode: bool = field(default=False, init=False, repr=False)
+    _warned_no_cancer_type: bool = field(default=False, init=False, repr=False)
 
     def parse_metadata(self, slide_path: str) -> SlideMetadata:
         filename = Path(slide_path).stem
         match = _TCGA_PATTERN.match(filename)
 
         if match is None:
+            msg = (
+                "TCGAAdapter: slide filename does not match the TCGA barcode pattern — "
+                "metadata will be empty for this slide. "
+                "Expected format: 'TCGA-{TSS}-{Participant}-{SampleType}...svs'. "
+                f"Got: {filename!r}. "
+                "Further non-matching filenames will be logged at DEBUG level."
+            )
+            if not self._warned_no_barcode:
+                logger.warning(msg)
+                self._warned_no_barcode = True
+            else:
+                logger.debug("TCGAAdapter: could not parse barcode from %r", filename)
             return SlideMetadata(
                 slide_path=slide_path,
                 dataset_name="TCGA",
@@ -105,6 +119,22 @@ class TCGAAdapter(DatasetAdapter):
             parent = Path(slide_path).parent.name
             if parent.startswith("TCGA-"):
                 cancer = parent
+            else:
+                msg = (
+                    f"TCGAAdapter: could not infer cancer type — parent directory {parent!r} "
+                    "does not look like a TCGA project (expected e.g. 'TCGA-BRCA'). "
+                    "cancer_type will be None for this slide. "
+                    "Organize slides as output_dir/TCGA-BRCA/slide.svs, "
+                    "or set TCGAAdapter(cancer_type='TCGA-BRCA') to fix this. "
+                    "Further occurrences will be logged at DEBUG level."
+                )
+                if not self._warned_no_cancer_type:
+                    logger.warning(msg)
+                    self._warned_no_cancer_type = True
+                else:
+                    logger.debug(
+                        "TCGAAdapter: could not infer cancer type from parent dir %r", parent
+                    )
 
         return SlideMetadata(
             slide_path=slide_path,

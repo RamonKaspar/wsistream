@@ -1,6 +1,11 @@
 """Patch sampling strategies."""
 
-from wsistream.sampling.base import PatchSampler
+from wsistream.sampling.base import (
+    CoordinatePool,
+    MultiLevelCoordinatePool,
+    PatchSampler,
+    enumerate_grid_coordinates,
+)
 from wsistream.sampling.continuous_magnification import ContinuousMagnificationSampler
 from wsistream.sampling.grid import GridSampler
 from wsistream.sampling.multi_magnification import MultiMagnificationSampler
@@ -12,4 +17,7 @@ __all__ = [
     "GridSampler",
     "MultiMagnificationSampler",
     "ContinuousMagnificationSampler",
+    "CoordinatePool",
+    "MultiLevelCoordinatePool",
+    "enumerate_grid_coordinates",
 ]

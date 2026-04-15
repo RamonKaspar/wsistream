@@ -8,7 +8,12 @@ from typing import Iterator
 
 import numpy as np
 
-from wsistream.sampling.base import PatchSampler
+from wsistream.sampling.base import (
+    CoordinatePool,
+    MultiLevelCoordinatePool,
+    PatchSampler,
+    enumerate_grid_coordinates,
+)
 from wsistream.sampling.random import RandomSampler
 from wsistream.slide import SlideHandle
 from wsistream.types import PatchCoordinate, TissueMask
@@ -128,3 +133,54 @@ class MultiMagnificationSampler(PatchSampler):
                 consecutive_failures += 1
                 if consecutive_failures >= self.max_consecutive_failures:
                     break
+
+    def build_coordinate_pool(
+        self,
+        slide: SlideHandle,
+        tissue_mask: TissueMask,
+        rng: np.random.Generator,
+    ) -> CoordinatePool | MultiLevelCoordinatePool:
+        """Build per-level coordinate pools for without-replacement sampling.
+
+        Used by :class:`~wsistream.pipeline.PatchPipeline` when
+        ``replacement="without_replacement"``.  Returns a
+        :class:`MultiLevelCoordinatePool` when multiple levels resolve to
+        distinct pyramid levels, or a flat :class:`CoordinatePool` when
+        falling back to a single level (e.g. missing MPP metadata).
+        """
+        props = slide.properties
+
+        max_total = None if self.num_patches == -1 else self.num_patches
+
+        if props.mpp is None:
+            logger.warning(
+                "Slide %s has no MPP metadata; building single-level pool at level 0",
+                props.path,
+            )
+            coordinates = enumerate_grid_coordinates(
+                slide, tissue_mask, 0, self.patch_size, self.tissue_threshold
+            )
+            return CoordinatePool(coordinates, rng, max_size=max_total)
+
+        weights_raw = self.mpp_weights or [1.0] * len(self.target_mpps)
+        total_w = sum(weights_raw)
+
+        level_pools: dict[int, list[PatchCoordinate]] = {}
+        level_weights: dict[int, float] = {}
+
+        for i, target_mpp in enumerate(self.target_mpps):
+            level = slide.best_level_for_mpp(target_mpp)
+            w = weights_raw[i] / total_w
+
+            if level in level_pools:
+                # Multiple target_mpps resolved to the same pyramid level.
+                level_weights[level] += w
+                continue
+
+            coordinates = enumerate_grid_coordinates(
+                slide, tissue_mask, level, self.patch_size, self.tissue_threshold
+            )
+            level_pools[level] = coordinates
+            level_weights[level] = w
+
+        return MultiLevelCoordinatePool(level_pools, level_weights, rng, max_total=max_total)

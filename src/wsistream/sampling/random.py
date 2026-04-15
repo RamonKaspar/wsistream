@@ -7,7 +7,7 @@ from typing import Iterator
 
 import numpy as np
 
-from wsistream.sampling.base import PatchSampler
+from wsistream.sampling.base import CoordinatePool, PatchSampler, enumerate_grid_coordinates
 from wsistream.slide import SlideHandle
 from wsistream.types import PatchCoordinate, TissueMask
 
@@ -112,3 +112,32 @@ class RandomSampler(PatchSampler):
                 slide_path=props.path,
             )
             count += 1
+
+    def build_coordinate_pool(
+        self,
+        slide: SlideHandle,
+        tissue_mask: TissueMask,
+        rng: np.random.Generator,
+    ) -> CoordinatePool:
+        """Build a shuffled pool of all valid grid coordinates for this slide.
+
+        Used by :class:`~wsistream.pipeline.PatchPipeline` when
+        ``replacement="without_replacement"``.
+        """
+        if self.target_mpp is not None:
+            level = slide.best_level_for_mpp(self.target_mpp)
+        else:
+            level = self.level
+
+        props = slide.properties
+        if level < 0 or level >= props.level_count:
+            raise ValueError(
+                f"level={level} is out of range for slide with "
+                f"{props.level_count} levels (path={props.path!r})"
+            )
+
+        coordinates = enumerate_grid_coordinates(
+            slide, tissue_mask, level, self.patch_size, self.tissue_threshold
+        )
+        max_size = None if self.num_patches == -1 else self.num_patches
+        return CoordinatePool(coordinates, rng, max_size=max_size)

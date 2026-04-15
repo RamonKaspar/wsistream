@@ -23,6 +23,7 @@ dataset = WsiStreamDataset(
     sampler=RandomSampler(patch_size=256, target_mpp=0.5),
     pool_size=8,
     patches_per_slide=100,
+    # replacement="without_replacement",  # optional: no repeated coords per slide
 )
 
 loader = DataLoader(dataset, batch_size=64, num_workers=4, pin_memory=True)

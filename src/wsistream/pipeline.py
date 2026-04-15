@@ -193,6 +193,14 @@ class PatchPipeline:
     cycle : bool
         When ``True``, re-queue all slides once the queue is exhausted,
         producing an infinite stream that cycles over the whole corpus.
+    replacement : str
+        ``"with_replacement"`` (default) uses the sampler's native
+        stochastic iteration.  ``"without_replacement"`` pre-builds a
+        finite pool of non-overlapping grid coordinates per slide and
+        consumes them without repetition.  The pool persists across
+        slide reopenings; when exhausted, it resets only if ``cycle``
+        is ``True``.  Supported by ``RandomSampler`` and
+        ``MultiMagnificationSampler``.
     seed : int or None
         Random seed for slide-level shuffling.
     """
@@ -210,6 +218,7 @@ class PatchPipeline:
     patches_per_slide: int = 100
     patches_per_visit: int = 1
     cycle: bool = False
+    replacement: str = "with_replacement"
     seed: int | None = None
 
     def __post_init__(self) -> None:
@@ -223,9 +232,24 @@ class PatchPipeline:
             raise ValueError(f"patches_per_slide must be >= 1, got {self.patches_per_slide}")
         if self.patches_per_visit < 1:
             raise ValueError(f"patches_per_visit must be >= 1, got {self.patches_per_visit}")
+        if self.replacement not in ("with_replacement", "without_replacement"):
+            raise ValueError(
+                f"replacement must be 'with_replacement' or 'without_replacement', "
+                f"got {self.replacement!r}"
+            )
+        if self.replacement == "without_replacement":
+            from wsistream.sampling.base import PatchSampler as _Base
+
+            if type(self.sampler).build_coordinate_pool is _Base.build_coordinate_pool:
+                raise TypeError(
+                    f"{type(self.sampler).__name__} does not support "
+                    f"replacement='without_replacement'. "
+                    f"Use RandomSampler or MultiMagnificationSampler."
+                )
         self.slide_paths = resolve_slide_paths(self.slide_paths)
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
+        self._coordinate_pools: dict[str, object] = {}
         # Mix PID into all seeds so workers (spawn or fork) diverge.
         self._pid_at_init: int = os.getpid()
         base = (self.seed or 0, self._pid_at_init)
@@ -235,6 +259,7 @@ class PatchPipeline:
         if hasattr(self.sampler, "_rng"):
             self.sampler._rng = np.random.default_rng((*base, 1))
         self._reseed_transform(self.transforms, base)
+        self._pool_rng = np.random.default_rng((*base, 4))
 
     # ── public API ──
 
@@ -427,6 +452,8 @@ class PatchPipeline:
             self.sampler._rng = np.random.default_rng((*base, 1))
 
         self._reseed_transform(self.transforms, base)
+        self._pool_rng = np.random.default_rng((*base, 4))
+        self._coordinate_pools.clear()
 
     @staticmethod
     def _reseed_transform(transform: PatchTransform | None, base_seed) -> None:
@@ -502,7 +529,15 @@ class PatchPipeline:
                 downsample=downsample_scalar,
                 slide_dimensions=slide.properties.dimensions,
             )
-            sampler_iter = iter(self.sampler.sample(slide, tissue_mask))
+
+            if self.replacement == "without_replacement":
+                pool = self._coordinate_pools.get(slide_path)
+                if pool is None or pool.exhausted:
+                    pool = self.sampler.build_coordinate_pool(slide, tissue_mask, self._pool_rng)
+                    self._coordinate_pools[slide_path] = pool
+                sampler_iter = _pool_to_iterator(pool, self._pool_rng)
+            else:
+                sampler_iter = iter(self.sampler.sample(slide, tissue_mask))
 
             # Only count as processed after full setup succeeds
             self._stats.slides_processed += 1
@@ -548,6 +583,14 @@ class PatchPipeline:
             indices = self._rng.permutation(len(paths))
             return [paths[i] for i in indices]
         return list(paths)
+
+
+def _pool_to_iterator(pool, rng) -> Iterator[PatchCoordinate]:
+    """Yield coordinates from a pre-built pool until exhausted."""
+    while not pool.exhausted:
+        coord = pool.pop(rng)
+        if coord is not None:
+            yield coord
 
 
 def _missing_backend():

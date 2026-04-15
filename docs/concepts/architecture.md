@@ -126,6 +126,7 @@ PatchPipeline(
     patches_per_visit=1,        # patches per slide before round-robin (increase for I/O locality)
     slide_sampling="sequential",# "sequential" or "random" slide order
     cycle=False,                # infinite cycling over slides
+    replacement="with_replacement",  # "without_replacement" for no repeated coords per slide
     seed=None,                  # random seed for slide-level shuffling
 )
 ```

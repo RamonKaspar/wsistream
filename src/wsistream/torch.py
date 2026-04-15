@@ -245,6 +245,9 @@ class WsiStreamDataset(IterableDataset):
     cycle : bool
         When ``True``, re-queue slides after exhaustion for infinite
         streaming (the typical mode for FM pretraining).
+    replacement : str
+        ``"with_replacement"`` (default) or ``"without_replacement"``.
+        See :class:`~wsistream.pipeline.PatchPipeline` for details.
     slide_sampling : str
         ``"sequential"`` or ``"random"`` slide iteration order.
     seed : int or None
@@ -264,6 +267,7 @@ class WsiStreamDataset(IterableDataset):
         patches_per_slide: int = 100,
         patches_per_visit: int = 1,
         cycle: bool = True,
+        replacement: str = "with_replacement",
         slide_sampling: str = "random",
         seed: int | None = None,
     ):
@@ -279,6 +283,7 @@ class WsiStreamDataset(IterableDataset):
         self._patches_per_visit = patches_per_visit
         self._slide_sampling = slide_sampling
         self._cycle = cycle
+        self._replacement = replacement
         self._seed = seed
         self._iter_count = 0
         self._shared_stats = _StatsAggregator()
@@ -329,6 +334,7 @@ class WsiStreamDataset(IterableDataset):
             patches_per_slide=self._patches_per_slide,
             patches_per_visit=self._patches_per_visit,
             cycle=self._cycle,
+            replacement=self._replacement,
             seed=worker_seed,
         )
 

@@ -31,6 +31,8 @@ Set `num_patches=-1` for infinite streaming during training. The sampler will ke
 
 When `target_mpp` is set, the sampler calls `SlideHandle.best_level_for_mpp()` to find the pyramid level closest to the desired microns-per-pixel for each slide, ignoring the `level` parameter. This is useful when slides come from different scanners with different native magnifications.
 
+RandomSampler supports `replacement="without_replacement"` in the pipeline. See [Without-replacement sampling](#without-replacement-sampling) below.
+
 ## GridSampler
 
 Exhaustive grid over the slide, keeping only patches with sufficient tissue. The grid defaults to non-overlapping (`stride=patch_size`), but the stride is configurable for overlapping extraction.
@@ -68,6 +70,8 @@ sampler = MultiMagnificationSampler(
 
 !!! note "MPP metadata"
     Multi-magnification sampling requires that the slide file contains microns-per-pixel (MPP) metadata. Most TCGA SVS files include this. If MPP is unavailable, the sampler falls back to single-level (level 0) sampling with a `RandomSampler`.
+
+MultiMagnificationSampler supports `replacement="without_replacement"` in the pipeline. See [Without-replacement sampling](#without-replacement-sampling) below.
 
 ## ContinuousMagnificationSampler
 
@@ -109,6 +113,39 @@ sampler = ContinuousMagnificationSampler(
 !!! note "MPP metadata"
     Continuous magnification sampling requires that the slide file contains microns-per-pixel (MPP) metadata. If MPP is unavailable, the sampler falls back to single-level (level 0) sampling with a `RandomSampler`, using `output_size` as `patch_size`.
 
+## Without-replacement sampling
+
+By default, the pipeline samples with replacement: the same patch coordinate can be drawn multiple times from the same slide across reopenings. When training with `cycle=True` on a finite slide set, this means exact duplicate patches can appear before the full slide has been covered.
+
+Setting `replacement="without_replacement"` on the pipeline changes this behaviour. The pipeline pre-builds a finite pool of **non-overlapping grid coordinates** for each slide (filtered by the tissue mask), shuffles them, and consumes them one by one. The pool persists across slide reopenings. When the pool is exhausted, it resets (reshuffled) only if `cycle=True`.
+
+```python
+pipeline = PatchPipeline(
+    ...,
+    sampler=RandomSampler(patch_size=256, target_mpp=0.5),
+    replacement="without_replacement",
+    cycle=True,
+)
+```
+
+!!! warning "Grid-based coordinate space"
+    This mode replaces the sampler's native stochastic iteration with enumeration over a non-overlapping grid (`stride = patch_size`). The sampling distribution is different from the continuous uniform distribution of `RandomSampler`: only grid-aligned positions are considered, and sampler knobs like `max_retries` and `max_consecutive_failures` have no effect. The sampler's `num_patches` is still respected as an upper bound on the number of coordinates yielded (a random subset of the grid is selected when `num_patches` is smaller than the full grid).
+
+| Sampler | Supported | Notes |
+|---|---|---|
+| `RandomSampler` | Yes | Single-level pool at the resolved pyramid level |
+| `MultiMagnificationSampler` | Yes | Per-level pools with weighted level selection |
+| `GridSampler` | No | Already deterministic and exhaustive |
+| `ContinuousMagnificationSampler` | No | Continuous magnification range is not discretisable into a finite pool |
+
+Using `replacement="without_replacement"` with an unsupported sampler raises a `TypeError` at pipeline construction time.
+
+Semantics:
+
+- **Per-slide**: each slide maintains its own independent pool. There is no corpus-wide coordination.
+- **Filtered patches are consumed**: coordinates rejected by `patch_filter` are not retried in the same cycle, since the filter is deterministic on the patch content.
+- **Memory**: the pool stores one `PatchCoordinate` per valid grid cell per slide. For a 100,000 x 100,000 slide at patch_size=256, that is up to ~150k coordinates (~12 MB). With many simultaneously open slides or very small patch sizes, this can add up.
+
 ## Writing your own
 
 ```python
@@ -120,3 +157,21 @@ class MySampler(PatchSampler):
         # tissue_mask: TissueMask
         yield ...  # PatchCoordinate
 ```
+
+To support `replacement="without_replacement"`, override `build_coordinate_pool`:
+
+```python
+from wsistream.sampling.base import CoordinatePool, PatchSampler, enumerate_grid_coordinates
+
+class MySampler(PatchSampler):
+    def sample(self, slide, tissue_mask):
+        yield ...
+
+    def build_coordinate_pool(self, slide, tissue_mask, rng):
+        coordinates = enumerate_grid_coordinates(
+            slide, tissue_mask, level=0, patch_size=256, tissue_threshold=0.4
+        )
+        return CoordinatePool(coordinates, rng)
+```
+
+If `build_coordinate_pool` is not overridden, the pipeline will raise a `TypeError` when `replacement="without_replacement"` is used with that sampler.

@@ -63,6 +63,7 @@ Key pipeline parameters:
 | `patches_per_slide` | Maximum patches extracted from one slide before it is closed and replaced by the next. |
 | `patches_per_visit` | Patches read from one slide before advancing to the next in the pool. Higher values improve I/O throughput on network filesystems. Default `1`. |
 | `cycle` | When `True`, slides are re-queued after processing, producing an infinite stream for step-based training. |
+| `replacement` | `"with_replacement"` (default) or `"without_replacement"`. When without, each slide's grid coordinates are consumed at most once per cycle. See [Sampling](components/sampling.md#without-replacement-sampling). |
 | `seed` | Random seed for slide-level shuffling. |
 
 See [Architecture](concepts/architecture.md) for a full explanation of the pipeline flow.

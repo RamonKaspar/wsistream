@@ -33,7 +33,7 @@ class NormalizeTransform(PatchTransform):
             raise ValueError(
                 f"mean and std must be 3-element tuples (RGB), " f"got mean={mean}, std={std}"
             )
-        if any(s == 0 for s in std):
+        if any(abs(s) < 1e-10 for s in std):
             raise ValueError(f"std contains zero which would cause division by zero: {std}")
         self.mean = mean
         self.std = std

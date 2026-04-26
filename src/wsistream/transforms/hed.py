@@ -19,8 +19,13 @@ class HEDColorAugmentation(PatchTransform):
 
     References
     ----------
+    Tellez et al., "Quantifying the effects of data augmentation and stain
+    color normalization in convolutional neural networks for computational
+    pathology", Medical Image Analysis, 2019.
+    https://doi.org/10.1016/j.media.2019.101544
+
     Karasikov et al., "Training state-of-the-art pathology foundation models
-    with orders of magnitude less data", 2025.
+    with orders of magnitude less data", 2025. https://arxiv.org/abs/2504.05186
     """
 
     sigma: float = 0.05

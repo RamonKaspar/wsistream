@@ -13,7 +13,7 @@ All transforms operate on numpy arrays `(H, W, 3)` and preserve `uint8` dtype, u
 
 ### HEDColorAugmentation
 
-Decomposes the image into Hematoxylin, Eosin, and DAB stain channels, applies random multiplicative perturbation to each channel, and converts back to RGB. This simulates staining variation across labs and scanners. Used by Midnight ([Karasikov et al., 2025](https://arxiv.org/abs/2504.05186)).
+Decomposes the image into Hematoxylin, Eosin, and DAB stain channels, applies random multiplicative perturbation to each channel, and converts back to RGB. This simulates staining variation across labs and scanners. Originally proposed by [Tellez et al. (2019)](https://doi.org/10.1016/j.media.2019.101544); also used by Midnight ([Karasikov et al., 2025](https://arxiv.org/abs/2504.05186)).
 
 ```python
 from wsistream.transforms import HEDColorAugmentation

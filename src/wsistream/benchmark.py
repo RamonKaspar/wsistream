@@ -48,14 +48,18 @@ class _MemoryMonitor:
 
         try:
             rss = self._process.memory_info().rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
+            return 0
+
+        try:
             for child in self._process.children(recursive=True):
                 try:
                     rss += child.memory_info().rss
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                except (psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
                     pass
             return rss
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            return 0
+        except (psutil.NoSuchProcess, psutil.AccessDenied, PermissionError):
+            return rss
 
     def _run(self) -> None:
         while not self._stop.is_set():

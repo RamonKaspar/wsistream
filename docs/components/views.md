@@ -86,7 +86,7 @@ for result in pipeline:
     view2 = result.views["view2"]
 ```
 
-## DINO-style multi-crop
+## DINOv2-style multi-crop for pathology
 
 <figure markdown="span">
   ![DINO-style multi-crop](../assets/views_multicrop.svg)
@@ -99,33 +99,95 @@ In the standard DINO setup, the two global crops and all local crops are sampled
 
 DINOv2 exposes the same crop structure through its default SSL config: `global_crops_scale=(0.32, 1.0)`, `local_crops_scale=(0.05, 0.32)`, `local_crops_number=8`, `global_crops_size=224`, and `local_crops_size=96` ([default config](https://github.com/facebookresearch/dinov2/blob/main/dinov2/configs/ssl_default_config.yaml)). The architecture-specific ViT-L/14 and ViT-g/14 training configs override `local_crops_size` to 98 ([ViT-L/14](https://github.com/facebookresearch/dinov2/blob/main/dinov2/configs/train/vitl14.yaml), [ViT-g/14](https://github.com/facebookresearch/dinov2/blob/main/dinov2/configs/train/vitg14.yaml)). The DINOv2 augmentation class applies these values through `RandomResizedCrop(global_crops_size, scale=global_crops_scale)` and `RandomResizedCrop(local_crops_size, scale=local_crops_scale)` ([augmentation code](https://github.com/facebookresearch/dinov2/blob/main/dinov2/data/augmentations.py)).
 
+Beyond cropping, DINOv2 applies per-view photometric augmentations with probabilities that differ across crop types ([augmentation code](https://github.com/facebookresearch/dinov2/blob/main/dinov2/data/augmentations.py)):
+
+| Augmentation | Global crop 1 | Global crop 2 | Local crops |
+|---|---|---|---|
+| Horizontal flip | p=0.5 | p=0.5 | p=0.5 |
+| ColorJitter (0.4, 0.4, 0.2, 0.1) | p=0.8 | p=0.8 | p=0.8 |
+| RandomGrayscale | p=0.2 | p=0.2 | p=0.2 |
+| GaussianBlur (σ ∈ [0.1, 2.0]) | **p=1.0** | p=0.1 | p=0.5 |
+| Solarize (threshold=128) | — | **p=0.2** | — |
+
+Because the blur and solarize probabilities differ, each crop type requires its own `ViewConfig`; global crops cannot share `count=2`.
+
+The following example adapts the DINOv2 recipe for pathology. `HEDColorAugmentation` replaces `ColorJitter` as the domain-specific stain augmentation (simulating staining variation across labs and scanners). It goes in `shared_transforms` so that all crops from the same tissue location share the same stain variation — the same physical tissue was stained once, so the stain profile is consistent across crops. `RandomFlipRotate` replaces `RandomHorizontalFlip` since tissue orientation is arbitrary in histology. All standard photometric augmentations (Gaussian blur, grayscale, solarization) are applied per-view via `AlbumentationsWrapper`.
+
 ```python
+import albumentations as A
+
+from wsistream.backends import OpenSlideBackend
+from wsistream.pipeline import PatchPipeline
+from wsistream.sampling import RandomSampler
+from wsistream.tissue import OtsuTissueDetector
+from wsistream.transforms import (
+    AlbumentationsWrapper,
+    ComposeTransforms,
+    HEDColorAugmentation,
+    RandomFlipRotate,
+)
 from wsistream.views import RandomResizedCrop, ViewConfig
 
 pipeline = PatchPipeline(
-    ...,
-    sampler=RandomSampler(patch_size=256, target_mpp=0.5),
+    slide_paths=slide_paths,
+    backend=OpenSlideBackend(),
+    tissue_detector=OtsuTissueDetector(),
+    sampler=RandomSampler(patch_size=256, num_patches=-1, target_mpp=0.5),
+    shared_transforms=HEDColorAugmentation(sigma=0.05),
     views=[
+        # ── Global crop 1: always blurred, no solarization ──
         ViewConfig(
-            name="global",
-            crop=RandomResizedCrop(size=224, scale=(0.4, 1.0)),  # 40-100% of extracted patch
-            count=2,
+            name="global1",
+            crop=RandomResizedCrop(size=224, scale=(0.32, 1.0)),
             transforms=ComposeTransforms([
-                HEDColorAugmentation(sigma=0.05),  # mild global-view color jitter
+                RandomFlipRotate(),
+                AlbumentationsWrapper(A.Compose([
+                    A.ToGray(p=0.2),
+                    A.GaussianBlur(blur_limit=(7, 23), sigma_limit=(0.1, 2.0), p=1.0),
+                ])),
             ]),
         ),
+        # ── Global crop 2: rare blur, sometimes solarized ──
+        ViewConfig(
+            name="global2",
+            crop=RandomResizedCrop(size=224, scale=(0.32, 1.0)),
+            transforms=ComposeTransforms([
+                RandomFlipRotate(),
+                AlbumentationsWrapper(A.Compose([
+                    A.ToGray(p=0.2),
+                    A.GaussianBlur(blur_limit=(7, 23), sigma_limit=(0.1, 2.0), p=0.1),
+                    A.Solarize(threshold_range=(128, 128), p=0.2),
+                ])),
+            ]),
+        ),
+        # ── Local crops: moderate blur, no solarization ──
         ViewConfig(
             name="local",
-            crop=RandomResizedCrop(size=96, scale=(0.05, 0.4)),  # 5-40% of extracted patch
-            count=6,  # local_0 ... local_5 (original DINO uses count=8; adjust to your setup)
+            crop=RandomResizedCrop(size=98, scale=(0.05, 0.32)),
+            count=8,
             transforms=ComposeTransforms([
-                HEDColorAugmentation(sigma=0.10),  # stronger local-view color jitter
+                RandomFlipRotate(),
+                AlbumentationsWrapper(A.Compose([
+                    A.ToGray(p=0.2),
+                    A.GaussianBlur(blur_limit=(7, 23), sigma_limit=(0.1, 2.0), p=0.5),
+                ])),
             ]),
         ),
     ],
-    shared_transforms=RandomFlipRotate(),
+    pool_size=8,
+    patches_per_slide=100,
+    cycle=True,
+    seed=42,
 )
 ```
+
+This produces 10 views per patch: `global1`, `global2`, and `local_0` through `local_7`. In the standard DINOv2 training loop, `global1` and `global2` are passed through the teacher (EMA) network, while all 10 views are passed through the student.
+
+!!! note "Differences from DINOv2 defaults"
+    - **Stain augmentation:** `HEDColorAugmentation` replaces `ColorJitter`. HED operates in the Hematoxylin-Eosin-DAB color space and produces more realistic staining variation for histology than generic RGB jitter. It is applied once in `shared_transforms` (all crops share the same stain) rather than independently per crop (as ColorJitter is in DINOv2).
+    - **Geometric augmentation:** `RandomFlipRotate` adds vertical flips and 90° rotations on top of horizontal flips. Tissue orientation is arbitrary in histology, so all orientations are equally valid.
+    - **No solarization on locals:** Following DINOv2 defaults. Solarization is only applied to global crop 2.
+    - **Blur kernel size:** `blur_limit=(7, 23)` matches the range used by DINO/DINOv2. The exact kernel size is less critical than the sigma range.
 
 ## Same-location magnification views
 

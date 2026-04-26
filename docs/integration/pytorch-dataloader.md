@@ -40,6 +40,16 @@ for batch in loader:
 
 Each batch is a dict of primitives and tensors. Image conversion (HWC uint8 → CHW float32, divided by 255) is handled internally. If a `NormalizeTransform` is included in the transforms chain, the image is already float32 and is passed through without re-scaling — values will reflect the normalization (e.g., roughly `[-2, 3]` for ImageNet stats), not `[0, 1]`.
 
+With multi-view datasets, each view is collated under its configured name:
+
+```python
+batch["global_0"]  # (B, 3, 224, 224)
+batch["global_1"]  # (B, 3, 224, 224)
+batch["local_0"]  # (B, 3, 96, 96)
+```
+
+Coordinate and metadata fields follow the same schema. See [Views](../components/views.md) for multi-view configuration examples.
+
 !!! note "Default slide ordering"
     `WsiStreamDataset` defaults to `slide_sampling="random"` (better for training diversity), while `PatchPipeline` defaults to `"sequential"`. If you need deterministic slide order through the dataset wrapper, pass `slide_sampling="sequential"` explicitly.
 

@@ -39,6 +39,7 @@ nav:
     - Sampling: components/sampling.md
     - Filters: components/filters.md
     - Transforms: components/transforms.md
+    - Views: components/views.md
     - Dataset Adapters: components/dataset-adapters.md
   - Integration:
     - PyTorch DataLoader: integration/pytorch-dataloader.md

@@ -50,7 +50,8 @@ Each iteration yields a `PatchResult` with the following fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `image` | `np.ndarray` | The patch pixels. Shape `(H, W, 3)`, dtype `uint8` (or `float32` after normalization). |
+| `image` | `np.ndarray` or `None` | The patch pixels when `transforms` are used. Shape `(H, W, 3)`, dtype `uint8` (or `float32` after normalization). `None` when `views` are configured. |
+| `views` | `dict[str, np.ndarray]` or `None` | Named multi-view outputs when `views` are configured. |
 | `coordinate` | `PatchCoordinate` | Location in the slide: `x`, `y`, `level`, `patch_size`, `mpp`, `slide_path`. |
 | `tissue_fraction` | `float` | Fraction of the patch region covered by tissue (from the tissue mask), in `[0, 1]`. |
 | `slide_metadata` | `SlideMetadata` or `None` | Dataset-specific metadata (populated when a `DatasetAdapter` is configured). |
@@ -64,7 +65,7 @@ Key pipeline parameters:
 | `patches_per_visit` | Patches read from one slide before advancing to the next in the pool. Higher values improve I/O throughput on network filesystems. Default `1`. |
 | `cycle` | When `True`, slides are re-queued after processing, producing an infinite stream for step-based training. |
 | `replacement` | `"with_replacement"` (default) or `"without_replacement"`. When without, each slide's grid coordinates are consumed at most once per cycle. See [Sampling](components/sampling.md#without-replacement-sampling). |
-| `seed` | Random seed for slide-level shuffling. |
+| `seed` | Seed for all internal RNGs: slide-queue order, sampler, transforms, and crops. Set this instead of seeds on individual transforms for reproducibility. |
 
 See [Architecture](concepts/architecture.md) for a full explanation of the pipeline flow.
 

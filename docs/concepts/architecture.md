@@ -17,7 +17,7 @@ For each slide, the pipeline executes the following steps:
 4. **Sampling**: pass the slide and mask to the `PatchSampler`, which yields `PatchCoordinate`s
 5. **Extraction**: read each patch from the slide at the specified pyramid level
 6. **Filtering**: run the `PatchFilter` on the extracted patch -- accept or reject
-7. **Transform**: apply the `PatchTransform` chain to accepted patches
+7. **Transform or views**: apply the `PatchTransform` chain, or produce multiple named views
 8. **Yield**: produce a `PatchResult` containing the image, coordinates, tissue fraction, and metadata
 
 Steps 3 and 6 are both tissue/quality checks, but at different resolutions:
@@ -71,7 +71,8 @@ The pipeline produces `PatchResult` objects. Here are the key data types:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `image` | `np.ndarray` | Patch pixels. `(H, W, 3)`, `uint8` (or `float32` after normalization). |
+| `image` | `np.ndarray` or `None` | Patch pixels when `transforms` are used. `(H, W, 3)`, `uint8` (or `float32` after normalization). |
+| `views` | `dict[str, np.ndarray]` or `None` | Named multi-view outputs when `views` are configured. |
 | `coordinate` | `PatchCoordinate` | Where this patch came from. |
 | `tissue_fraction` | `float` | Fraction of the patch region covered by tissue, in `[0, 1]`. |
 | `slide_metadata` | `SlideMetadata` or `None` | Dataset-specific metadata (when a `DatasetAdapter` is configured). |
@@ -107,6 +108,7 @@ The pipeline produces `PatchResult` objects. Here are the key data types:
 | **Samplers** | `RandomSampler` (rejection sampling, supports `target_mpp`), `GridSampler` (exhaustive grid, configurable stride), `MultiMagnificationSampler` (samples across multiple pyramid levels), `ContinuousMagnificationSampler` (crop-and-resize at continuously varying magnification) |
 | **Filters** | `HSVPatchFilter` (per-tile HSV pixel check, Midnight-style) |
 | **Transforms** | `HEDColorAugmentation`, `RandomFlipRotate`, `ResizeTransform`, `NormalizeTransform`, `AlbumentationsWrapper`, `ComposeTransforms` |
+| **Views** | `ViewConfig`, `RandomResizedCrop` for multi-view and multi-crop outputs |
 | **Dataset Adapters** | `TCGAAdapter` (parses TCGA barcodes for patient ID, cancer type, sample type) |
 
 ## Configuration
@@ -119,6 +121,8 @@ PatchPipeline(
     sampler=...,                # where to extract patches
     patch_filter=...,           # accept/reject extracted patches (on actual pixels)
     transforms=...,             # augment accepted patches
+    views=...,                  # optional multi-view outputs (mutually exclusive with transforms)
+    shared_transforms=...,      # optional transform applied once before per-view processing
     dataset_adapter=...,        # attach dataset-specific metadata (e.g., TCGA)
     thumbnail_size=(2048, 2048),# resolution for tissue detection
     pool_size=8,                # slides open simultaneously

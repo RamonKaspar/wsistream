@@ -37,8 +37,33 @@ from wsistream.types import (
     TissueMask,
     resolve_slide_paths,
 )
+from wsistream.views import ViewConfig, expand_view_names
 
 logger = logging.getLogger(__name__)
+
+# Keys that WsiStreamDataset always writes into every batch item.
+# View names must not collide with any of these.
+_RESERVED_BATCH_KEYS: frozenset[str] = frozenset(
+    {
+        # Single-view image key
+        "image",
+        # PatchCoordinate fields
+        "x",
+        "y",
+        "level",
+        "patch_size",
+        "slide_path",
+        "mpp",
+        "tissue_fraction",
+        # SlideMetadata fields
+        "dataset_name",
+        "patient_id",
+        "tissue_type",
+        "cancer_type",
+        "sample_type",
+        "extra",
+    }
+)
 
 
 @dataclass
@@ -202,7 +227,15 @@ class PatchPipeline:
         is ``True``.  Supported by ``RandomSampler`` and
         ``MultiMagnificationSampler``.
     seed : int or None
-        Random seed for slide-level shuffling.
+        Seed for all internal RNGs: slide-queue shuffling, the sampler,
+        every transform, every crop, and fork-safe worker reseeding.
+        Set this (not seeds on individual transforms) for reproducibility.
+    views : list[ViewConfig] or None
+        Optional multi-view configuration.  Mutually exclusive with
+        ``transforms``.
+    shared_transforms : PatchTransform or None
+        Optional transform chain applied once to the primary extracted
+        patch before per-view crop/transform processing.
     """
 
     slide_paths: str | Path | list[str | Path] = field(default_factory=list)
@@ -220,6 +253,8 @@ class PatchPipeline:
     cycle: bool = False
     replacement: str = "with_replacement"
     seed: int | None = None
+    views: list[ViewConfig] | None = None
+    shared_transforms: PatchTransform | None = None
 
     def __post_init__(self) -> None:
         if self.slide_sampling not in ("sequential", "random"):
@@ -237,6 +272,26 @@ class PatchPipeline:
                 f"replacement must be 'with_replacement' or 'without_replacement', "
                 f"got {self.replacement!r}"
             )
+        if self.views is not None and self.transforms is not None:
+            raise ValueError("transforms and views are mutually exclusive")
+        if self.views is None and self.shared_transforms is not None:
+            raise ValueError("shared_transforms requires views")
+        if self.views is not None:
+            if not self.views:
+                raise ValueError("views must contain at least one ViewConfig")
+            if self.shared_transforms is not None and any(
+                v.mpp_override is not None for v in self.views
+            ):
+                raise ValueError("shared_transforms cannot be combined with mpp_override views")
+            names = expand_view_names(self.views)
+            if len(names) != len(set(names)):
+                raise ValueError(f"view names must be unique after count expansion, got {names}")
+            for name in names:
+                if name in _RESERVED_BATCH_KEYS:
+                    raise ValueError(
+                        f"view name {name!r} conflicts with a reserved batch key; "
+                        f"reserved names are: {sorted(_RESERVED_BATCH_KEYS)}"
+                    )
         if self.replacement == "without_replacement":
             from wsistream.sampling.base import PatchSampler as _Base
 
@@ -252,13 +307,15 @@ class PatchPipeline:
         self._coordinate_pools: dict[str, object] = {}
         # Mix PID into all seeds so workers (spawn or fork) diverge.
         self._pid_at_init: int = os.getpid()
-        base = (self.seed or 0, self._pid_at_init)
+        base = (0 if self.seed is None else self.seed, self._pid_at_init)
         self._rng = np.random.default_rng(base)
         # Reseed sampler and transforms with pipeline-controlled seeds
         # so that externally-created RNGs don't collide across workers.
         if hasattr(self.sampler, "_rng"):
             self.sampler._rng = np.random.default_rng((*base, 1))
         self._reseed_transform(self.transforms, base)
+        self._reseed_transform(self.shared_transforms, (*base, 5))
+        self._reseed_views(self.views, (*base, 6))
         self._pool_rng = np.random.default_rng((*base, 4))
 
     # ── public API ──
@@ -379,8 +436,14 @@ class PatchPipeline:
                             visit_count = 0
                     continue
 
-                if self.transforms is not None:
-                    patch = self.transforms(patch)
+                if self.views is not None:
+                    views = self._make_views(entry, coord, patch)
+                    image = None
+                else:
+                    views = None
+                    if self.transforms is not None:
+                        patch = self.transforms(patch)
+                    image = patch
 
                 # Tissue fraction for this patch
                 ds = entry.slide.properties.level_downsamples[coord.level]
@@ -400,10 +463,11 @@ class PatchPipeline:
                 )
 
                 yield PatchResult(
-                    image=patch,
+                    image=image,
                     coordinate=coord,
                     tissue_fraction=tf,
                     slide_metadata=entry.metadata,
+                    views=views,
                 )
 
                 # Reached per-slide patch limit --> rotate this slide out
@@ -445,13 +509,15 @@ class PatchPipeline:
         # Fork detected — reseed everything and update the stored PID
         # so subsequent iterations in this worker don't reseed again.
         self._pid_at_init = pid
-        base = (self.seed or 0, pid)
+        base = (0 if self.seed is None else self.seed, pid)
         self._rng = np.random.default_rng(base)
 
         if hasattr(self.sampler, "_rng"):
             self.sampler._rng = np.random.default_rng((*base, 1))
 
         self._reseed_transform(self.transforms, base)
+        self._reseed_transform(self.shared_transforms, (*base, 5))
+        self._reseed_views(self.views, (*base, 6))
         self._pool_rng = np.random.default_rng((*base, 4))
         self._coordinate_pools.clear()
 
@@ -463,8 +529,101 @@ class PatchPipeline:
             transform._rng = np.random.default_rng((*base_seed, 2))
         if hasattr(transform, "transforms"):
             for i, t in enumerate(transform.transforms):
-                if hasattr(t, "_rng"):
-                    t._rng = np.random.default_rng((*base_seed, 3, i))
+                # Recurse so that nested ComposeTransforms are fully reseeded.
+                PatchPipeline._reseed_transform(t, (*base_seed, 3, i))
+
+    @classmethod
+    def _reseed_views(cls, views: list[ViewConfig] | None, base_seed) -> None:
+        if views is None:
+            return
+        for i, view in enumerate(views):
+            if view.crop is not None and hasattr(view.crop, "_rng"):
+                view.crop._rng = np.random.default_rng((*base_seed, i, 1))
+            cls._reseed_transform(view.transforms, (*base_seed, i, 2))
+
+    def _make_views(
+        self,
+        entry: _PoolEntry,
+        coord: PatchCoordinate,
+        primary_patch: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        """Create named views from the primary patch and optional re-reads."""
+        assert self.views is not None
+
+        shared_primary = primary_patch
+        if self.shared_transforms is not None:
+            shared_primary = self.shared_transforms(shared_primary)
+
+        outputs: dict[str, np.ndarray] = {}
+        for view in self.views:
+            # For mpp_override views, read from the slide once regardless of count
+            # and copy the result for each repeated output. This avoids N identical disk reads.
+            override_base: np.ndarray | None = (
+                self._read_view_override(entry, coord, view)
+                if view.mpp_override is not None
+                else None
+            )
+
+            for idx in range(view.count):
+                name = view.name if view.count == 1 else f"{view.name}_{idx}"
+
+                image = override_base.copy() if override_base is not None else shared_primary.copy()
+
+                if view.crop is not None:
+                    image = view.crop(image)
+                if view.transforms is not None:
+                    image = view.transforms(image)
+
+                outputs[name] = image
+        return outputs
+
+    def _read_view_override(
+        self,
+        entry: _PoolEntry,
+        coord: PatchCoordinate,
+        view: ViewConfig,
+    ) -> np.ndarray:
+        """Read a same-center view at a different target MPP."""
+        props = entry.slide.properties
+        if props.mpp is None:
+            raise ValueError(
+                f"View {view.name!r} uses mpp_override={view.mpp_override}, "
+                f"but slide {props.path!r} has no MPP metadata."
+            )
+
+        assert view.mpp_override is not None
+        level = entry.slide.best_level_for_mpp(view.mpp_override)
+        patch_size = view.patch_size_override or coord.patch_size
+
+        src_ds = props.level_downsamples[coord.level]
+        src_l0 = coord.patch_size * src_ds
+        center_x = coord.x + src_l0 / 2
+        center_y = coord.y + src_l0 / 2
+
+        view_ds = props.level_downsamples[level]
+        view_l0 = patch_size * view_ds
+
+        x = int(round(center_x - view_l0 / 2))
+        y = int(round(center_y - view_l0 / 2))
+
+        if x < 0 or y < 0 or x + view_l0 > props.width or y + view_l0 > props.height:
+            import warnings
+
+            warnings.warn(
+                f"View {view.name!r}: same-center read extends outside slide dimensions "
+                f"({props.width}x{props.height}). The view center is preserved; returned pixels "
+                f"may include backend-defined padding.",
+                UserWarning,
+                stacklevel=4,
+            )
+
+        return entry.slide.read_region(
+            x=x,
+            y=y,
+            width=patch_size,
+            height=patch_size,
+            level=level,
+        )
 
     def _fill_pool(self, pool: list[_PoolEntry], slide_queue: deque[str]) -> None:
         """Open slides from the queue until the pool is full.

@@ -252,21 +252,23 @@ class TestRoundRobin:
 
 class TestSlideSampling:
     def test_random_slide_sampling_is_seeded(self):
-        slide_paths = fake_slide_paths(6)
+        # Use 20 slides so that a random permutation equalling alphabetical
+        # order is astronomically unlikely (probability 1/20! ≈ 2e-19).
+        slide_paths = fake_slide_paths(20)
 
         pipeline1 = _make_pipeline(
-            n_slides=6,
+            n_slides=20,
             slide_paths=slide_paths,
             patches_per_slide=1,
-            pool_size=6,
+            pool_size=20,
             slide_sampling="random",
             seed=7,
         )
         pipeline2 = _make_pipeline(
-            n_slides=6,
+            n_slides=20,
             slide_paths=slide_paths,
             patches_per_slide=1,
-            pool_size=6,
+            pool_size=20,
             slide_sampling="random",
             seed=7,
         )

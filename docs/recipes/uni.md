@@ -8,12 +8,12 @@ UNI uses **offline** CLAM-based tissue segmentation followed by non-overlapping 
 
 - **Patch sizes**: 256×256 (75.8M patches) and 512×512 (24.3M patches) at 20× (0.5 µm/px)
 - **Tissue detection**: [CLAM](https://github.com/mahmoodlab/CLAM) toolkit — saturation-channel thresholding in HSV, median blur, morphological closing, contour filtering with area thresholds. Exact CLAM parameters are not specified in the paper.
-- **Sampling**: non-overlapping tissue patches extracted offline; ~1000 patches per WSI on average (100M patches from 100K WSIs)
+- **Sampling**: non-overlapping tissue patches extracted offline; "sampling approximately 800 histology tissue patches per WSI in Mass-100K"; 100,130,900 patches from 100,426 WSIs
 - **Normalization**: ImageNet — mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)
-- **DINOv2 multi-crop**: extracted tiles (256 or 512) are fed to DINOv2, which internally produces global crops (224×224) and local crops (96×96). Standard DINOv2 augmentations apply (color jitter, grayscale, blur, solarization, horizontal flip).
+- **DINOv2 multi-crop**: extracted tiles (256 or 512) are fed to DINOv2 using the "default configuration." Specific crop sizes, scale ranges, and counts are **not stated in the paper**. Values shown in the approximation (global 224, local 96, scale 0.32–1.0 / 0.05–0.32, 2+8 crops) are DINOv2 defaults inferred from ViT-L/16 (96 = 6×16).
 - **Architecture**: ViT-L/16 (0.3B params)
-- **Training**: DINOv2 (DINO + iBOT + KoLeo), 125K iterations, batch size 3072, fp16, PyTorch-FSDP on 32× A100 GPUs
-- **Data**: Mass-100K — ~100M patches from 100K H&E WSIs across 20 tissue types (MGH, BWH, GTEx; no TCGA)
+- **Training**: DINOv2 (DINO self-distillation, iBOT masked-image modeling, KoLeo regularization), 125K iterations, batch size 3072, fp16 with PyTorch-FSDP on 32× A100 GPUs
+- **Data**: Mass-100K — 100,130,900 patches from 100,426 H&E WSIs across 20 tissue types (MGH, BWH, GTEx; no TCGA)
 
 ## wsistream approximation
 
@@ -40,6 +40,39 @@ pipeline = PatchPipeline(
 )
 ```
 
+### With multi-crop views
+
+UNI feeds 256×256 tiles to DINOv2's multi-crop using the "default configuration". The paper does not enumerate crop sizes, scale ranges, or counts. The configuration below uses DINOv2 defaults; local size 96px is inferred from ViT-L/16's 16px patch stride (6 × 16 = 96).
+
+```python
+from wsistream.views import ViewConfig, RandomResizedCrop
+
+pipeline = PatchPipeline(
+    slide_paths=slide_paths,
+    backend=OpenSlideBackend(),
+    tissue_detector=CLAMTissueDetector(),
+    sampler=RandomSampler(patch_size=256, num_patches=-1, target_mpp=0.5),
+    views=[
+        ViewConfig(
+            name="global",
+            crop=RandomResizedCrop(size=224, scale=(0.32, 1.0)),
+            count=2,  # global_0, global_1 — DINOv2 default: 2 global crops
+        ),
+        ViewConfig(
+            name="local",
+            crop=RandomResizedCrop(size=96, scale=(0.05, 0.32)),  # 6×16 for ViT-L/16
+            count=8,  # local_0 … local_7 — DINOv2 default: 8 local crops
+        ),
+    ],
+    pool_size=8,
+    patches_per_slide=100,
+    cycle=True,
+)
+```
+
+!!! note "Per-crop augmentations"
+    UNI uses standard DINOv2 photometric augmentations (color jitter, Gaussian blur, grayscale, solarization, horizontal flip) applied per crop. To add them with view-asymmetric probabilities matching DINOv2 defaults, see the [DINOv2-style multi-crop example](../components/views.md#dinov2-style-multi-crop-for-pathology).
+
 ## Deviations from paper
 
 | Step | Paper | wsistream | Match |
@@ -49,7 +82,8 @@ pipeline = PatchPipeline(
 | Magnification | 20× (0.5 µm/px) | `target_mpp=0.5` | Exact |
 | Extraction | Offline non-overlapping grid (all tissue patches) | Online random sampling (with replacement) | **Different** — random sampling does not guarantee full coverage |
 | Normalization | ImageNet mean/std | Training code | Exact (not part of wsistream) |
-| DINOv2 augmentations | Standard DINOv2 multi-crop + augmentations | Training code | N/A (not part of wsistream) |
+| DINOv2 crop sizes / scales | "Default configuration" — specific sizes/scales not enumerated in the paper | DINOv2 defaults (global 224, scale 0.32–1.0; local 96 = 6×16, scale 0.05–0.32) | **Inferred** |
+| DINOv2 augmentations | Standard DINOv2 training objective documented in the model card; exact augmentation chain not enumerated in the paper text | Training code | **Inferred** |
 
 ## UNI2-h (Chen et al., 2025)
 

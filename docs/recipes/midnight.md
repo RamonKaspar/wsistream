@@ -16,7 +16,7 @@ Midnight uses **online patching** — tiles are sampled uniformly at random from
 - **HED augmentation**: color augmentations in the HED space ([Tellez et al., 2019](https://doi.org/10.1016/j.media.2019.101544)). The paper does **not** state the sigma value. Tellez et al. define "light" as σ=0.05 and "strong" as σ=0.2.
 - **Normalization**: mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), scaling pixel values to [−1, 1]. Applied in the DINOv2 data transforms, not the patching pipeline.
 - **Training**: DINOv2 with a KDE regularizer replacing KoLeo, ViT-g/14 (1.1B params), initialized from ImageNet-pretrained DINOv2 checkpoints. 1M iterations on 32× H100 GPUs, effective batch size 768.
-- **DINOv2 multi-crop**: tiles are fed as 256×256 to DINOv2, which internally crops global views (224×224) and local views (98×98). There is no separate resize step in the data pipeline.
+- **DINOv2 multi-crop**: tiles are fed as 256×256 to DINOv2. The paper states local and global crop output sizes of **98px and 224px** for standard training (scaled to 168px and 392px for high-resolution post-training). Scale ranges, number of crops, and whether standard DINOv2 color augmentations (color jitter, Gaussian blur, solarize) are used alongside HED are not specified in the paper.
 
 ## wsistream approximation
 
@@ -65,6 +65,47 @@ pipeline = PatchPipeline(
 !!! note "`num_patches=-1` means infinite streaming"
     The sampler generates random coordinates indefinitely (with replacement). This matches Midnight's online patching: each training step draws fresh random crops. The pipeline's `patches_per_slide` controls how many patches are drawn before rotating to the next slide.
 
+### With multi-crop views
+
+To replicate DINOv2's internal multi-crop within wsistream, move HED augmentation to `shared_transforms` and add `views`. The paper confirms local crops are 98px and global crops are 224px for standard training. Scale ranges and crop counts are not stated in the paper — DINOv2 default scales and counts are used below. Whether standard DINOv2 color augmentations (color jitter, Gaussian blur) apply alongside HED is also not specified.
+
+```python
+from wsistream.views import ViewConfig, RandomResizedCrop
+
+pipeline = PatchPipeline(
+    slide_paths=slide_paths,
+    backend=OpenSlideBackend(),
+    tissue_detector=HSVTissueDetector(...),
+    patch_filter=HSVPatchFilter(...),
+    sampler=MultiMagnificationSampler(
+        target_mpps=[0.25, 0.5, 1.0, 2.0],
+        patch_size=256,
+        num_patches=-1,
+        tissue_threshold=0.4,
+    ),
+    shared_transforms=HEDColorAugmentation(sigma=0.05),  # applied once to the 256x256 tile
+    views=[
+        ViewConfig(
+            name="global",
+            crop=RandomResizedCrop(size=224, scale=(0.32, 1.0)),
+            count=2,   # global_0, global_1 — DINOv2 default: 2 global crops
+        ),
+        ViewConfig(
+            name="local",
+            crop=RandomResizedCrop(size=98, scale=(0.05, 0.32)),  # 7×14 for ViT-g/14
+            count=8,   # local_0 … local_7 — DINOv2 default: 8 local crops
+        ),
+    ],
+    slide_sampling="random",
+    pool_size=8,
+    patches_per_slide=100,
+    cycle=True,
+)
+```
+
+!!! note "Per-crop augmentations"
+    The paper does not state whether standard DINOv2 photometric augmentations (Gaussian blur, grayscale, solarization) are applied alongside HED. To add them with view-asymmetric probabilities matching DINOv2 defaults, see the [DINOv2-style multi-crop example](../components/views.md#dinov2-style-multi-crop-for-pathology).
+
 ## Deviations from paper
 
 | Step | Paper | wsistream | Match |
@@ -77,7 +118,11 @@ pipeline = PatchPipeline(
 | Sampling strategy | Online random from arbitrary positions | `num_patches=-1` (infinite random with replacement) | Exact |
 | Tile size | 256×256 | `patch_size=256` | Exact |
 | HED augmentation | HED perturbation, sigma not stated | `HEDColorAugmentation(sigma=0.05)` | **Approximate** — paper does not specify sigma |
-| Normalization | mean/std = 0.5 | Training code | Exact (not part of wsistream) |
+| DINOv2 crop output sizes | local 98px, global 224px (paper-stated for standard training) | `size=98` (local), `size=224` (global) | Exact |
+| DINOv2 scale ranges | Not specified in paper | DINOv2 defaults (0.32–1.0 global, 0.05–0.32 local) | **Unverified** |
+| DINOv2 crop counts | Not specified in paper | 2 global + 8 local (DINOv2 default) | **Unverified** |
+| Per-crop color augmentations | Not specified — unknown if used alongside HED | Not included in wsistream config | **Unverified** |
+| Normalization | mean/std = 0.5 | Training code | Exact for Kaiko-FM (Aben et al.); not explicitly stated for Midnight |
 
 ## Earlier Kaiko-FM pipeline (Aben et al., 2024)
 

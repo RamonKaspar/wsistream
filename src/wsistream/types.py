@@ -137,9 +137,42 @@ class SlideMetadata:
 
 @dataclass(frozen=True)
 class PatchResult:
-    """A single extracted patch with all its metadata."""
+    """A single extracted patch with all its metadata.
 
-    image: np.ndarray
+    Exactly one of ``image`` or ``views`` must be non-None.
+
+    Attributes
+    ----------
+    image : np.ndarray or None
+        The extracted patch in single-view mode.  Shape ``(H, W, 3)``,
+        dtype ``uint8`` unless a ``NormalizeTransform`` was applied (then
+        ``float32``).  ``None`` when ``views`` is configured.
+    coordinate : PatchCoordinate
+        Level-0 location of the patch in the slide.
+    tissue_fraction : float
+        Fraction of the patch region covered by tissue, in ``[0, 1]``.
+    slide_metadata : SlideMetadata or None
+        Dataset-specific metadata when a ``DatasetAdapter`` is configured.
+    views : dict[str, np.ndarray] or None
+        Named view outputs in multi-view mode.  Keys are the view names
+        after ``count`` expansion (e.g. ``"global_0"``, ``"local_0"``).
+        Each value has shape ``(H_view, W_view, 3)`` where the spatial
+        dimensions are determined by each view's ``RandomResizedCrop.size``
+        (or the primary patch size if no crop is applied).  dtype is
+        ``uint8`` unless ``NormalizeTransform`` is used.  ``None`` in
+        single-view mode.
+    """
+
+    image: np.ndarray | None
     coordinate: PatchCoordinate
     tissue_fraction: float
     slide_metadata: SlideMetadata | None = None
+    views: dict[str, np.ndarray] | None = None
+
+    def __post_init__(self) -> None:
+        if self.image is None and self.views is None:
+            raise ValueError("PatchResult must have either image or views set, not neither")
+        if self.image is not None and self.views is not None:
+            raise ValueError("PatchResult cannot have both image and views set simultaneously")
+        if self.views is not None and not self.views:
+            raise ValueError("PatchResult.views must contain at least one view")

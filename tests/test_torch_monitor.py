@@ -10,6 +10,8 @@ from tests.conftest import FakeBackend
 from wsistream.sampling.random import RandomSampler
 from wsistream.tissue.otsu import OtsuTissueDetector
 from wsistream.torch import MonitoredLoader, WsiStreamDataset
+from wsistream.transforms import ResizeTransform
+from wsistream.views import ViewConfig
 
 
 def _make_dataset(n_slides=4, patches_per_slide=10, cycle=True):
@@ -110,6 +112,28 @@ class TestMetricValues:
         next(iter(mon))
         payload = mon.mark_step()
         assert payload["loader/patches_per_sec"] > 0
+
+    def test_multi_view_batch_size_inferred_from_view_tensor(self):
+        from tests.conftest import fake_slide_paths
+
+        dataset = WsiStreamDataset(
+            slide_paths=fake_slide_paths(2),
+            backend=FakeBackend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
+            views=[ViewConfig(name="view", transforms=ResizeTransform(32))],
+            pool_size=1,
+            patches_per_slide=4,
+            cycle=False,
+            seed=123,
+        )
+        loader = DataLoader(dataset, batch_size=4, num_workers=0)
+        mon = MonitoredLoader(loader, log_every=1)
+
+        next(iter(mon))
+        payload = mon.mark_step()
+
+        assert payload["loader/patches_per_sec"] > payload["loader/batches_per_sec"]
 
     def test_data_fraction_between_zero_and_one(self):
         dataset = _make_dataset()

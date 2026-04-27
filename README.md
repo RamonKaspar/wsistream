@@ -13,7 +13,7 @@
     <a href="https://ramonkaspar.github.io/wsistream"><img alt="Docs" src="https://img.shields.io/badge/docs-GitHub%20Pages-blue"></a>
 </p>
 
-Stream patches directly from WSIs during training — no disk pre-extraction, no storage overhead. Every component is pluggable: backends, tissue detectors, samplers, filters, transforms, dataset adapters.
+Stream patches directly from WSIs during training — no disk pre-extraction, no storage overhead. Every component is pluggable: backends, tissue detectors, samplers, filters, transforms, views, dataset adapters.
 
 ## Install
 
@@ -52,8 +52,8 @@ Each slide goes through a fixed pipeline:
 3. **Sample coordinates**: a `PatchSampler` proposes (x, y) locations within tissue regions
 4. **Extract patch**: read the pixel data from the slide at each coordinate
 5. **Filter patch**: a `PatchFilter` accepts or rejects the tile based on its pixels
-6. **Transform patch**: apply augmentations (`HEDColorAugmentation`, `RandomFlipRotate`, etc.)
-7. **Yield result**: `PatchResult` with image, coordinates, tissue fraction, and metadata
+6. **Transform patch**: apply augmentations (`HEDColorAugmentation`, `RandomFlipRotate`, etc.) or produce named multi-view outputs
+7. **Yield result**: `PatchResult` with image (single-view) or named views (multi-view), coordinates, tissue fraction, and metadata
 
 ## Quick start
 

@@ -129,6 +129,28 @@ def _configure_threads() -> dict[str, str]:
     }
 
 
+def _infer_batch_size(batch) -> int:
+    """Infer batch size from the first tensor-like field."""
+    if isinstance(batch, dict):
+        if "image" in batch:
+            try:
+                return int(batch["image"].shape[0])
+            except (AttributeError, IndexError):
+                return 1
+        for value in batch.values():
+            try:
+                return int(value.shape[0])
+            except (AttributeError, IndexError):
+                continue
+        for value in batch.values():
+            if isinstance(value, (list, tuple)):
+                return len(value)
+    try:
+        return int(batch.shape[0])
+    except (AttributeError, IndexError):
+        return 1
+
+
 def _measure_rank(
     make_dataset: MakeDatasetFn,
     slide_paths: list[str],
@@ -179,7 +201,7 @@ def _measure_rank(
         t_batch = time.perf_counter()
         batch = next(loader_iter)
         batch_times.append(time.perf_counter() - t_batch)
-        total_patches += batch["image"].shape[0]
+        total_patches += _infer_batch_size(batch)
     elapsed = time.perf_counter() - t_start
 
     peak_rss_mb = mem_monitor.stop()

@@ -244,10 +244,17 @@ class TestMultiWorkerStress:
         dataset = _make_dataset(n_slides=4, patches_per_slide=10, cycle=True)
         loader = DataLoader(dataset, batch_size=4, num_workers=2)
         loader_iter = iter(loader)
-        for _ in range(5):
-            batch = next(loader_iter)
-            assert batch["image"].shape == (4, 3, 64, 64)
-        assert dataset.stats_dict()["pipeline/patches_extracted"] >= 20
+        seen = 0
+        try:
+            for _ in range(5):
+                batch = next(loader_iter)
+                assert batch["image"].shape == (4, 3, 64, 64)
+                seen += batch["image"].shape[0]
+        finally:
+            shutdown = getattr(loader_iter, "_shutdown_workers", None)
+            if shutdown is not None:
+                shutdown()
+        assert dataset.stats_dict()["pipeline/patches_extracted"] >= seen
 
 
 # ── Seed diversity ──

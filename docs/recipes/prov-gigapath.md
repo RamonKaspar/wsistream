@@ -44,6 +44,40 @@ pipeline = PatchPipeline(
 )
 ```
 
+### With multi-crop views
+
+Prov-GigaPath trains the tile encoder with DINOv2 multi-crop on 256×256 tiles. The paper does not enumerate the DINOv2 crop configuration (scale ranges, crop counts, local output size). The crop scales and counts below follow DINOv2's default SSL config; the 98px local crop size follows the DINOv2 ViT-g/14 training config.
+
+```python
+from wsistream.views import ViewConfig, RandomResizedCrop
+
+pipeline = PatchPipeline(
+    slide_paths=slide_paths,
+    backend=OpenSlideBackend(),
+    tissue_detector=OtsuTissueDetector(),
+    sampler=RandomSampler(patch_size=256, num_patches=-1, target_mpp=0.5,
+                          tissue_threshold=0.1),
+    views=[
+        ViewConfig(
+            name="global",
+            crop=RandomResizedCrop(size=224, scale=(0.32, 1.0)),
+            count=2,  # global_0, global_1 — DINOv2 default: 2 global crops
+        ),
+        ViewConfig(
+            name="local",
+            crop=RandomResizedCrop(size=98, scale=(0.05, 0.32)),  # DINOv2 ViT-g/14 config
+            count=8,  # local_0 … local_7 — DINOv2 default: 8 local crops
+        ),
+    ],
+    pool_size=8,
+    patches_per_slide=100,
+    cycle=True,
+)
+```
+
+!!! note "Per-crop augmentations"
+    Prov-GigaPath uses standard DINOv2 photometric augmentations (color jitter, Gaussian blur, grayscale, solarization, horizontal flip) applied per crop. To add them with view-asymmetric probabilities matching DINOv2 defaults, see the [DINOv2-style multi-crop example](../components/views.md#dinov2-style-multi-crop-for-pathology).
+
 ## Deviations from paper
 
 | Step | Paper | wsistream | Match |
@@ -54,3 +88,5 @@ pipeline = PatchPipeline(
 | Tile size | 256×256 | `patch_size=256` | Exact |
 | Extraction | Offline, all non-overlapping tiles | Online random sampling (with replacement) | **Different** — random sampling does not guarantee full coverage |
 | Normalization | ImageNet mean/std | Training code | Exact (not part of wsistream) |
+| DINOv2 crop sizes / scales | Not enumerated in paper | DINOv2 default scales; local size 98 from DINOv2 ViT-g/14 config | **Unverified** — paper does not state crop sizes or scale ranges |
+| DINOv2 crop counts | Not enumerated in paper | 2 global + 8 local (DINOv2 default) | **Unverified** |

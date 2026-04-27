@@ -104,16 +104,34 @@ class MonitoredLoader:
         self._window.data_wait_ns += wait_ns
         self._lifetime.data_wait_ns += wait_ns
 
-        # Infer batch size from the image tensor
-        try:
-            n = batch["image"].shape[0]
-        except (KeyError, AttributeError, IndexError):
-            n = 1
+        n = self._infer_batch_size(batch)
         self._window.patch_count += n
         self._lifetime.patch_count += n
 
         self._batch_yielded_at = t1
         return batch
+
+    @staticmethod
+    def _infer_batch_size(batch) -> int:
+        """Infer batch size from the first tensor-like field."""
+        if isinstance(batch, dict):
+            if "image" in batch:
+                try:
+                    return int(batch["image"].shape[0])
+                except (AttributeError, IndexError):
+                    return 1
+            for value in batch.values():
+                try:
+                    return int(value.shape[0])
+                except (AttributeError, IndexError):
+                    continue
+            for value in batch.values():
+                if isinstance(value, (list, tuple)):
+                    return len(value)
+        try:
+            return int(batch.shape[0])
+        except (AttributeError, IndexError):
+            return 1
 
     def mark_step(self, extra: dict | None = None) -> dict | None:
         """Record the end of a training step.

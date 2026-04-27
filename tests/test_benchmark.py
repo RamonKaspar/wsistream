@@ -9,6 +9,8 @@ from wsistream.benchmark import BenchmarkResult, benchmark_throughput
 from wsistream.sampling.random import RandomSampler
 from wsistream.tissue.otsu import OtsuTissueDetector
 from wsistream.torch import WsiStreamDataset
+from wsistream.transforms import ResizeTransform
+from wsistream.views import ViewConfig
 
 
 def _can_use_gloo() -> bool:
@@ -45,6 +47,21 @@ def _make_cycle_false_dataset(slide_paths, pool_size, patches_per_slide, patches
         patches_per_slide=patches_per_slide,
         patches_per_visit=patches_per_visit,
         cycle=False,
+        seed=seed,
+    )
+
+
+def _make_multi_view_dataset(slide_paths, pool_size, patches_per_slide, patches_per_visit, seed):
+    return WsiStreamDataset(
+        slide_paths=slide_paths,
+        backend=FakeBackend(),
+        tissue_detector=OtsuTissueDetector(),
+        sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
+        views=[ViewConfig(name="view", transforms=ResizeTransform(32))],
+        pool_size=pool_size,
+        patches_per_slide=patches_per_slide,
+        patches_per_visit=patches_per_visit,
+        cycle=True,
         seed=seed,
     )
 
@@ -123,6 +140,21 @@ class TestBenchmarkSingleRank:
         assert len(results) == 2
         assert results[0].num_workers == 0
         assert results[1].num_workers == 1
+
+    def test_multi_view_counts_patches_from_view_tensors(self):
+        results = benchmark_throughput(
+            make_dataset=_make_multi_view_dataset,
+            slide_paths=fake_slide_paths(4),
+            num_workers=0,
+            world_size=1,
+            pool_size=2,
+            patches_per_slide=10,
+            batch_size=4,
+            warmup_batches=0,
+            measure_batches=2,
+            verbose=False,
+        )
+        assert results[0].total_patches == 8
 
 
 class TestBenchmarkGridSearch:

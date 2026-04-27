@@ -33,6 +33,7 @@ from wsistream.transforms import (
     ResizeTransform,
 )
 from wsistream.types import PatchCoordinate, PatchResult, SlideMetadata, TissueMask
+from wsistream.views import CropParams, RandomResizedCrop, ViewConfig, expand_view_names
 
 __version__ = "0.1.4"
 __all__ = [
@@ -71,6 +72,11 @@ __all__ = [
     "ResizeTransform",
     "NormalizeTransform",
     "AlbumentationsWrapper",
+    # Views
+    "ViewConfig",
+    "RandomResizedCrop",
+    "CropParams",
+    "expand_view_names",
     # Datasets
     "DatasetAdapter",
     "TCGAAdapter",

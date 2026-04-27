@@ -2,7 +2,7 @@
 
 **Modular online patch streaming from whole-slide images for training pathology foundation models.**
 
-`wsistream` delivers patches directly from WSIs during training -- no pre-extraction to disk, no storage overhead. Every component is pluggable: backends, tissue detectors, samplers, filters, transforms, and dataset adapters.
+`wsistream` delivers patches directly from WSIs during training -- no pre-extraction to disk, no storage overhead. Every component is pluggable: backends, tissue detectors, samplers, filters, transforms, views, and dataset adapters.
 
 ## Why online patching?
 
@@ -19,6 +19,7 @@ See [Online Patching](concepts/online-patching.md) for a detailed discussion.
 - **Three samplers**: random (with rejection sampling), grid, and multi-magnification
 - **Per-tile quality filtering**: HSV pixel-based patch acceptance (Midnight-style)
 - **Augmentations**: HED stain augmentation, random flip/rotate, resize, normalize, and an albumentations wrapper
+- **Multi-view outputs**: multi-view augmentation (SimCLR/BYOL/MoCo-style), DINO-style multi-crop, and same-location magnification views
 - **Pool-based slide interleaving**: multiple slides open simultaneously with round-robin patch delivery
 - **Infinite streaming**: `cycle=True` for step-based training without epochs
 - **Dataset adapters**: TCGA barcode parsing with automatic metadata extraction

@@ -19,6 +19,7 @@ from wsistream.sampling.base import PatchSampler
 from wsistream.tissue.base import TissueDetector
 from wsistream.transforms.base import PatchTransform
 from wsistream.types import PatchResult, SlideMetadata, resolve_slide_paths
+from wsistream.views import ViewConfig
 
 logger = logging.getLogger(__name__)
 
@@ -210,12 +211,12 @@ class WsiStreamDataset(IterableDataset):
     workers.  DDP rank partitioning should be done **before** creating
     this dataset (see :func:`partition_slides_by_rank`).
 
-    Each yielded item is a ``dict`` with keys: ``"image"`` (a
-    ``(C, H, W)`` float32 tensor in ``[0, 1]``), coordinate fields
-    (``"x"``, ``"y"``, ``"level"``, ``"patch_size"``, ``"slide_path"``,
-    ``"mpp"``), ``"tissue_fraction"``, and when a ``dataset_adapter``
-    is configured: ``"patient_id"``, ``"cancer_type"``, ``"tissue_type"``,
-    ``"sample_type"``, ``"dataset_name"``, ``"extra"`` (JSON string).
+    Each yielded item is a ``dict`` with keys: ``"image"`` (single-view
+    mode) or one tensor per configured view, coordinate fields (``"x"``,
+    ``"y"``, ``"level"``, ``"patch_size"``, ``"slide_path"``, ``"mpp"``),
+    ``"tissue_fraction"``, and when a ``dataset_adapter`` is configured:
+    ``"patient_id"``, ``"cancer_type"``, ``"tissue_type"``, ``"sample_type"``,
+    ``"dataset_name"``, ``"extra"`` (JSON string).
 
     Parameters
     ----------
@@ -251,7 +252,14 @@ class WsiStreamDataset(IterableDataset):
     slide_sampling : str
         ``"sequential"`` or ``"random"`` slide iteration order.
     seed : int or None
-        Random seed for slide-level shuffling.
+        Seed for all internal RNGs: slide-queue order, sampler, transforms,
+        and crops.  Set this instead of seeds on individual components.
+    views : list[ViewConfig] or None
+        Optional multi-view configuration.  Mutually exclusive with
+        ``transforms``; see :class:`~wsistream.pipeline.PatchPipeline`.
+    shared_transforms : PatchTransform or None
+        Optional transform chain applied once to the primary extracted patch
+        before per-view crop and transform processing.  Requires ``views``.
     """
 
     def __init__(
@@ -270,13 +278,21 @@ class WsiStreamDataset(IterableDataset):
         replacement: str = "with_replacement",
         slide_sampling: str = "random",
         seed: int | None = None,
+        views: list[ViewConfig] | None = None,
+        shared_transforms: PatchTransform | None = None,
     ):
+        if views is not None and transforms is not None:
+            raise ValueError("transforms and views are mutually exclusive")
+        if views is None and shared_transforms is not None:
+            raise ValueError("shared_transforms requires views")
         self._slide_paths = resolve_slide_paths(slide_paths)
         self._backend = backend
         self._tissue_detector = tissue_detector
         self._sampler = sampler
         self._patch_filter = patch_filter
         self._transforms = transforms
+        self._views = views
+        self._shared_transforms = shared_transforms
         self._dataset_adapter = dataset_adapter
         self._pool_size = pool_size
         self._patches_per_slide = patches_per_slide
@@ -303,7 +319,7 @@ class WsiStreamDataset(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is not None:
             slides = self._slide_paths[worker_info.id :: worker_info.num_workers]
-            base = (self._seed or 0) + worker_info.id
+            base = (0 if self._seed is None else self._seed) + worker_info.id
             worker_seed = base + self._iter_count
             logger.debug(
                 "Worker %d/%d: %d slides",
@@ -314,7 +330,7 @@ class WsiStreamDataset(IterableDataset):
         else:
             slides = self._slide_paths
             worker_seed = (
-                (self._seed or 0) + self._iter_count if self._seed is not None else self._iter_count
+                self._seed + self._iter_count if self._seed is not None else self._iter_count
             )
 
         if not slides:
@@ -328,6 +344,8 @@ class WsiStreamDataset(IterableDataset):
             sampler=self._sampler,
             patch_filter=self._patch_filter,
             transforms=self._transforms,
+            views=self._views,
+            shared_transforms=self._shared_transforms,
             dataset_adapter=self._dataset_adapter,
             slide_sampling=self._slide_sampling,
             pool_size=self._pool_size,
@@ -338,8 +356,7 @@ class WsiStreamDataset(IterableDataset):
             seed=worker_seed,
         )
 
-        use_multiworker = worker_info is not None
-        flush_interval = 16 if use_multiworker else 1
+        flush_interval = 16 if worker_info is not None else 1
 
         prev_counters = [0, 0, 0, 0, 0, 0, 0.0]  # sp, sf, pe, pf, ec, tfc, tft
         prev_slides_total = 0
@@ -480,32 +497,39 @@ class WsiStreamDataset(IterableDataset):
     @staticmethod
     def _result_to_dict(result: PatchResult) -> dict:
         """Convert a PatchResult to a dict of collate-safe types."""
-        image = np.ascontiguousarray(result.image)
-        if image.dtype == np.uint8:
-            tensor = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
-        else:
-            tensor = torch.from_numpy(image).permute(2, 0, 1).float()
-
         coord = result.coordinate
 
         # Metadata first (includes slide_path from adapter)
         meta = result.slide_metadata
         item = meta.to_flat_dict() if meta else SlideMetadata.empty_dict()
 
-        # Coordinate fields overwrite — these are authoritative
-        item.update(
-            {
-                "image": tensor,
-                "x": coord.x,
-                "y": coord.y,
-                "level": coord.level,
-                "patch_size": coord.patch_size,
-                "slide_path": coord.slide_path,
-                "mpp": coord.mpp if coord.mpp is not None else -1.0,
-                "tissue_fraction": result.tissue_fraction,
-            }
-        )
+        coord_fields = {
+            "x": coord.x,
+            "y": coord.y,
+            "level": coord.level,
+            "patch_size": coord.patch_size,
+            "slide_path": coord.slide_path,
+            "mpp": coord.mpp if coord.mpp is not None else -1.0,
+            "tissue_fraction": result.tissue_fraction,
+        }
+        if result.views is not None:
+            for name, view in result.views.items():
+                item[name] = WsiStreamDataset._image_to_tensor(view)
+            # Coordinate fields overwrite; these are authoritative.
+            item.update(coord_fields)
+        else:
+            item.update({"image": WsiStreamDataset._image_to_tensor(result.image), **coord_fields})
         return item
+
+    @staticmethod
+    def _image_to_tensor(image: np.ndarray | None) -> torch.Tensor:
+        """Convert HWC numpy image to CHW float tensor."""
+        if image is None:
+            raise ValueError("image array is None")
+        image = np.ascontiguousarray(image)
+        if image.dtype == np.uint8:
+            return torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
+        return torch.from_numpy(image).permute(2, 0, 1).float()
 
 
 # Re-export for convenience: `from wsistream.torch import MonitoredLoader`

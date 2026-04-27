@@ -35,7 +35,7 @@ from wsistream.transforms import (
 from wsistream.types import PatchCoordinate, PatchResult, SlideMetadata, TissueMask
 from wsistream.views import CropParams, RandomResizedCrop, ViewConfig, expand_view_names
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"
 __all__ = [
     # Core
     "PatchPipeline",

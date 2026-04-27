@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wsistream"
-version = "0.1.4"
+version = "0.1.5"
 description = "Modular online patch streaming from whole-slide images for computational pathology"
 readme = "README.md"
 license = {text = "MIT"}

@@ -4,6 +4,8 @@ repo_url: https://github.com/RamonKaspar/wsistream
 
 theme:
   name: material
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
   palette:
     scheme: default
     primary: deep purple

@@ -7,6 +7,7 @@ import multiprocessing as mp
 from pathlib import Path
 from typing import Iterator
 
+import cv2
 import numpy as np
 import torch
 from torch.utils.data import IterableDataset
@@ -318,6 +319,13 @@ class WsiStreamDataset(IterableDataset):
         # Partition slides across DataLoader workers
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is not None:
+            # Disable OpenCV's internal threadpool inside each forked worker. The patch
+            # pipeline (tissue detection, resizing) is OpenCV-heavy; left at its default a
+            # worker can inherit OpenCV's pthread mutexes in a locked state and deadlock on
+            # its first call, and N workers each spawning a CPU-count threadpool only
+            # oversubscribes. Parallelism comes from the workers themselves. Scoped to the
+            # worker branch so the main process (num_workers=0) keeps the user's cv2 setting.
+            cv2.setNumThreads(0)
             slides = self._slide_paths[worker_info.id :: worker_info.num_workers]
             base = (0 if self._seed is None else self._seed) + worker_info.id
             worker_seed = base + self._iter_count

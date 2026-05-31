@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 import pytest
 import torch
@@ -302,3 +303,37 @@ class TestMultiWorker:
         stats = dataset.stats_dict()
         assert stats["pipeline/patches_extracted"] == 12
         assert stats["pipeline/slides_processed"] == 4
+
+
+class TestWorkerOpenCVThreads:
+    """The patch pipeline is OpenCV-heavy, and forked DataLoader workers can inherit a
+    locked OpenCV mutex and deadlock. Iterating inside a worker must disable OpenCV's
+    threadpool; iterating in the main process must leave the user's setting untouched."""
+
+    def test_worker_iteration_disables_opencv_threads(self, monkeypatch):
+        from types import SimpleNamespace
+
+        original = cv2.getNumThreads()
+        try:
+            cv2.setNumThreads(4)
+            monkeypatch.setattr(
+                torch.utils.data,
+                "get_worker_info",
+                lambda: SimpleNamespace(id=0, num_workers=1),
+            )
+            next(iter(_make_dataset(n_slides=2)))
+            # setNumThreads(0) disables the pool; getNumThreads() then reports 1.
+            assert cv2.getNumThreads() == 1
+        finally:
+            cv2.setNumThreads(original)
+
+    def test_main_process_iteration_leaves_opencv_threads(self, monkeypatch):
+        original = cv2.getNumThreads()
+        try:
+            cv2.setNumThreads(4)
+            expected = cv2.getNumThreads()  # whatever OpenCV actually set (may clamp)
+            monkeypatch.setattr(torch.utils.data, "get_worker_info", lambda: None)
+            next(iter(_make_dataset(n_slides=2)))
+            assert cv2.getNumThreads() == expected
+        finally:
+            cv2.setNumThreads(original)

@@ -117,12 +117,31 @@ pipeline = PatchPipeline(
 | Magnification weights | Not specified in paper | Uniform (default) | Unknown |
 | Sampling strategy | Online random from arbitrary positions | `num_patches=-1` (infinite random with replacement) | Exact |
 | Tile size | 256×256 | `patch_size=256` | Exact |
-| HED augmentation | HED perturbation, sigma not stated | `HEDColorAugmentation(sigma=0.05)` | **Approximate** — paper does not specify sigma |
+| HED augmentation | HED perturbation, sigma not stated | `HEDColorAugmentation(sigma=0.05)` | **Approximate** — paper does not specify sigma; OpenMidnight differs, see below |
 | DINOv2 crop output sizes | local 98px, global 224px (paper-stated for standard training) | `size=98` (local), `size=224` (global) | Exact |
-| DINOv2 scale ranges | Not specified in paper | DINOv2 defaults (0.32–1.0 global, 0.05–0.32 local) | **Unverified** |
-| DINOv2 crop counts | Not specified in paper | 2 global + 8 local (DINOv2 default) | **Unverified** |
-| Per-crop color augmentations | Not specified — unknown if used alongside HED | Not included in wsistream config | **Unverified** |
+| DINOv2 scale ranges | Not specified in paper | DINOv2 defaults (0.32–1.0 global, 0.05–0.32 local) | **Inferred** — matches OpenMidnight, see below |
+| DINOv2 crop counts | Not specified in paper | 2 global + 8 local (DINOv2 default) | **Inferred** — matches OpenMidnight, see below |
+| Per-crop color augmentations | Not specified — unknown if used alongside HED | Not included in wsistream config | **Unverified** — OpenMidnight does apply them alongside HED, see below |
 | Normalization | mean/std = 0.5 | Training code | Exact for Kaiko-FM (Aben et al.); not explicitly stated for Midnight |
+
+## OpenMidnight, the reference implementation
+
+kaiko's public [midnight repo](https://github.com/kaiko-ai/midnight) contains evaluation code only. [OpenMidnight](https://github.com/MedARC-AI/OpenMidnight) (Sophont/MedARC) is an open replication that does publish its data pipeline. It is a replication, not kaiko's code, so it shows one working implementation of the recipe rather than what kaiko did. It diverges from the paper in several places:
+
+| Step | Paper | OpenMidnight | wsistream recipe |
+|------|-------|--------------|------------------|
+| Tile size | 256×256 | **224×224** (`patch_size` in both prepatching and `SlideDataset`) | 256 (follows paper) |
+| Coordinate selection | Online, random positions | **Offline precompute** to a `path x y level` text file, read online at train time | Fully online |
+| Foreground mask | U-Net at thumbnail scale | **None**, no mask stage at all | `HSVTissueDetector` |
+| Foreground threshold | 40% | **No equivalent** (no mask to threshold) | `tissue_threshold=0.4` |
+| Per-tile HSV filter | ≥60% in hue [90,180], sat [8,255], val [103,255] | Same bounds, `ratio > 0.6`, applied **during precompute**. The copy in `SlideDataset.hsv` is never called | `HSVPatchFilter(min_pixel_fraction=0.6)` |
+| Magnifications | 0.25, 0.5, 1.0, 2.0 µm/px | **Every pyramid level**, one accepted patch per level per pass, no µm/px targeting | `target_mpps=[0.25, 0.5, 1.0, 2.0]` |
+| HED augmentation | Not specified | `s_i + U(-0.05, 0.05)` on `skimage.rgb2hed`, additive only, `p=0.5`, clipped to [0,1] | `HEDColorAugmentation(sigma=0.05)`, multiplicative |
+| DINOv2 global crops | 224px (paper-stated) | `global_crops_size: 224`, `scale (0.32, 1.0)`, count 2 | `size=224, scale=(0.32, 1.0), count=2` |
+| DINOv2 local crops | 98px (paper-stated) | `local_crops_size: 98` (overrides the 96 default), `scale (0.05, 0.32)`, count 8 | `size=98, scale=(0.05, 0.32), count=8` |
+| Per-crop augmentations | Not specified | ColorJitter(0.2, 0.2, 0.1, 0.05) p=0.8, RandomGrayscale p=0.2, GaussianBlur p=1.0/0.1/0.5, HorizontalFlip p=0.5. RandStainNA and 90° rotation present but commented out | Not included by default |
+
+Before trying to match OpenMidnight's HED via `sigma_bias`, read the [scale warning](../components/transforms.md#hedcoloraugmentation): their additive perturbation sits in a much more aggressive regime than `sigma=0.05` suggests.
 
 ## Earlier Kaiko-FM pipeline (Aben et al., 2024)
 

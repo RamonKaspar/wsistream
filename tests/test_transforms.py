@@ -276,6 +276,94 @@ class TestHEDColorAugmentation:
     def test_zero_sigma_is_near_identity(self):
         img = np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8)
         out = HEDColorAugmentation(sigma=0.0)(img)
-        # With sigma=0, perturbation is *1.0 — but the RGB->HED->RGB round
-        # trip has inherent numerical loss from the color deconvolution.
+        # With sigma=0, alpha is 1.0 and beta is 0.0 — but the RGB->HED->RGB
+        # round trip has inherent numerical loss from the color deconvolution.
         assert np.abs(out.astype(int) - img.astype(int)).mean() < 25
+
+    def test_rejects_negative_sigma(self):
+        with pytest.raises(ValueError, match="sigma must be >= 0"):
+            HEDColorAugmentation(sigma=-0.1)
+        with pytest.raises(ValueError, match="sigma_bias must be >= 0"):
+            HEDColorAugmentation(sigma_bias=-0.1)
+
+
+class TestHEDMatchesTellez:
+    """The perturbation must be s' = alpha * s + beta with both terms uniform.
+
+    Verified against Tellez et al. 2018 (arXiv:1808.05896, sec. IV-B) and the
+    HistomicsTK reference implementation, which draws
+    alpha ~ U(1 - sigma1, 1 + sigma1) and beta ~ U(-sigma2, sigma2).
+    """
+
+    @staticmethod
+    def _draws(sigma, sigma_bias, n=4000):
+        """Recover the (alpha, beta) pairs a transform would draw."""
+        t = HEDColorAugmentation(sigma=sigma, sigma_bias=sigma_bias, seed=0)
+        alphas, betas = [], []
+        for _ in range(n):
+            alphas.append(t._rng.uniform(1.0 - sigma, 1.0 + sigma))
+            betas.append(t._rng.uniform(-sigma_bias, sigma_bias))
+        return np.array(alphas), np.array(betas)
+
+    def test_additive_term_is_applied(self):
+        """sigma=0 must still perturb, because beta alone is non-zero."""
+        img = np.full((32, 32, 3), 160, dtype=np.uint8)
+        out = HEDColorAugmentation(sigma=0.0, sigma_bias=0.2, seed=0)(img)
+        baseline = HEDColorAugmentation(sigma=0.0, sigma_bias=0.0, seed=0)(img)
+        assert not np.array_equal(out, baseline), "additive beta term has no effect"
+
+    def test_multiplicative_term_is_applied(self):
+        """sigma_bias=0 must still perturb, because alpha alone is non-unit."""
+        img = np.full((32, 32, 3), 160, dtype=np.uint8)
+        out = HEDColorAugmentation(sigma=0.2, sigma_bias=0.0, seed=0)(img)
+        baseline = HEDColorAugmentation(sigma=0.0, sigma_bias=0.0, seed=0)(img)
+        assert not np.array_equal(out, baseline), "multiplicative alpha term has no effect"
+
+    def test_draws_are_bounded_not_gaussian(self):
+        """Uniform draws are strictly bounded; a Gaussian would have tails."""
+        sigma = 0.05
+        alphas, betas = self._draws(sigma, sigma)
+        assert alphas.min() >= 1.0 - sigma and alphas.max() <= 1.0 + sigma
+        assert betas.min() >= -sigma and betas.max() <= sigma
+        # A Gaussian(0, sigma) would put ~0.3% of mass outside +/- 3 sigma.
+        # Bounded support also means the extremes are actually reached.
+        assert alphas.max() > 1.0 + 0.9 * sigma
+        assert betas.min() < -0.9 * sigma
+
+    def test_draws_are_uniform(self):
+        """A uniform sample has mean at the centre and variance range^2/12."""
+        sigma = 0.05
+        alphas, betas = self._draws(sigma, sigma)
+        assert abs(alphas.mean() - 1.0) < 0.005
+        assert abs(betas.mean()) < 0.005
+        expected_var = (2 * sigma) ** 2 / 12
+        assert abs(alphas.var() - expected_var) < 0.2 * expected_var
+        assert abs(betas.var() - expected_var) < 0.2 * expected_var
+
+    def test_sigma_bias_defaults_to_disabled(self):
+        """beta is off by default: its scale does not transfer from the paper."""
+        img = np.full((32, 32, 3), 160, dtype=np.uint8)
+        default = HEDColorAugmentation(sigma=0.05, seed=3)(img)
+        explicit_off = HEDColorAugmentation(sigma=0.05, sigma_bias=0.0, seed=3)(img)
+        np.testing.assert_array_equal(default, explicit_off)
+
+    def test_default_stays_in_plausible_stain_range(self):
+        """Guards the scale trap: beta at the paper's sigma shifts hue wildly.
+
+        On skimage's stain scale a beta of +/-0.05 is several times the channel
+        mean, which turns tissue yellow/cyan/purple. The default must stay in a
+        regime where the mean channel order of an H&E patch is preserved.
+        """
+        rng = np.random.default_rng(0)
+        img = np.stack(
+            [
+                rng.integers(170, 210, (48, 48), dtype=np.uint8),  # R high
+                rng.integers(90, 130, (48, 48), dtype=np.uint8),  # G low
+                rng.integers(150, 190, (48, 48), dtype=np.uint8),  # B mid
+            ],
+            axis=-1,
+        )
+        t = HEDColorAugmentation(sigma=0.05, seed=0)
+        for _ in range(25):
+            out = t(img).reshape(-1, 3).mean(0)
+            assert out[0] > out[1] and out[2] > out[1], f"channel order broken: {out}"

@@ -13,18 +13,29 @@ All transforms operate on numpy arrays `(H, W, 3)` and preserve `uint8` dtype, u
 
 ### HEDColorAugmentation
 
-Decomposes the image into Hematoxylin, Eosin, and DAB stain channels, applies random multiplicative perturbation to each channel, and converts back to RGB. This simulates staining variation across labs and scanners. Originally proposed by [Tellez et al. (2019)](https://doi.org/10.1016/j.media.2019.101544); also used by Midnight ([Karasikov et al., 2025](https://arxiv.org/abs/2504.05186)).
+Decomposes the image into Hematoxylin, Eosin, and DAB stain channels, perturbs each channel `i` as `s_i' = alpha_i * s_i + beta_i`, and converts back to RGB. This simulates staining variation across labs and scanners. The perturbation was introduced by [Tellez et al. (2018)](https://arxiv.org/abs/1808.05896), which draws `alpha` and `beta` per channel from two uniform distributions; [Tellez et al. (2019)](https://doi.org/10.1016/j.media.2019.101544) reports the intensity ranges. Also used by Midnight ([Karasikov et al., 2025](https://arxiv.org/abs/2504.05186)).
 
 ```python
 from wsistream.transforms import HEDColorAugmentation
 
 transform = HEDColorAugmentation(
-    sigma=0.05,    # perturbation intensity (default)
-    seed=None,     # random seed
+    sigma=0.05,       # alpha ~ U(1 - sigma, 1 + sigma); 0.05 = Tellez "light", 0.2 = "strong"
+    sigma_bias=0.0,   # beta ~ U(-sigma_bias, sigma_bias); disabled by default, see warning
+    seed=None,        # random seed
 )
 ```
 
-The `sigma` parameter controls augmentation intensity. Higher values produce more aggressive color variation.
+`sigma` controls the multiplicative term. Higher values produce more aggressive color variation.
+
+!!! warning "`sigma` and `sigma_bias` are not on the same scale"
+    `alpha` is a ratio, so it is invariant to the stain-space convention and the published sigma values port directly. `beta` is an absolute offset in stain space, so its meaning depends on that convention.
+
+    The reference implementations that apply the published sigma to `beta` ([HistomicsTK](https://digitalslidearchive.github.io/HistomicsTK/histomicstk.preprocessing.augmentation.html), StainTools) work in SDA space scaled to roughly `[0, 255]`. wsistream uses `skimage.color.separate_stains`, whose output for typical H&E tissue has channel means near `0.02` and maxima near `0.25`. A `beta` of +/-0.05 there is several times the channel mean: it swamps the stain signal and turns tissue yellow, cyan or purple instead of producing a plausible stain shift.
+
+    `sigma_bias` therefore defaults to `0.0`. If you enable it, scale it to your data's stain-channel magnitude (order `1e-3` for skimage HED output) and inspect the output visually. For reference, [OpenMidnight](https://github.com/MedARC-AI/OpenMidnight) applies `s_i + U(-0.05, 0.05)` to `skimage.rgb2hed` output with no multiplicative term (`dinov2/data/augmentations.py`, class `hed_mod`), which sits deliberately in this aggressive regime.
+
+!!! tip "Alternative: `albumentations.HEStain`"
+    `HEDColorAugmentation` uses skimage's **fixed** HED deconvolution matrix, so it perturbs stain channels defined by a global average rather than by your slide's actual stain vectors. [`A.HEStain`](https://explore.albumentations.ai/transform/HEStain) estimates the stain matrix per image (Macenko or Vahadane) and applies both a multiplicative and an additive term on its own concentration scale, which sidesteps the scale trap above. Prefer it when stain vectors vary a lot across your cohort; see [Stain augmentation via albumentations](#stain-augmentation-via-albumentations) below.
 
 ### NormalizeTransform
 

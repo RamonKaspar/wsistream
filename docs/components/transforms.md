@@ -95,6 +95,9 @@ transform = AlbumentationsWrapper(A.Compose([
 ]))
 ```
 
+!!! note "Seeding across DataLoader workers"
+    Albumentations keeps its own RNG, seeded from the numpy global RNG. PyTorch does not reseed the numpy global per DataLoader worker, so with fork-based workers every worker would otherwise replay the same augmentation sequence. `AlbumentationsWrapper` prevents this: it owns an RNG that `PatchPipeline` reseeds per worker and pushes a derived seed into albumentations via `set_random_seed`. Set `seed` on `PatchPipeline`, not on the wrapper. This requires albumentations >= 2.0; with older versions the wrapper warns and augmentations stay tied to the numpy global RNG.
+
 ### Stain augmentation via albumentations
 
 Albumentations (>= 2.0) includes a built-in [`HEStain`](https://explore.albumentations.ai/transform/HEStain) transform that performs Macenko or Vahadane stain augmentation — decomposing the image into stain concentration channels, randomly perturbing them, and reconstructing. This is a more principled alternative to `HEDColorAugmentation` for simulating staining variation across labs and scanners.

@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from wsistream.pipeline import PatchPipeline
 from wsistream.transforms import (
     AlbumentationsWrapper,
     ComposeTransforms,
@@ -90,6 +91,25 @@ class TestComposeTransforms:
         assert "NormalizeTransform" in r
 
 
+class _SeededFake:
+    """Stand-in for an albumentations Compose that honours set_random_seed."""
+
+    def __init__(self):
+        self.seeds = []
+        self._rng = np.random.default_rng(0)
+
+    def set_random_seed(self, seed):
+        self.seeds.append(seed)
+        self._rng = np.random.default_rng(seed)
+
+    def __call__(self, *, image):
+        shift = int(self._rng.integers(0, 60))
+        return {"image": np.clip(image.astype(np.int16) + shift, 0, 255).astype(np.uint8)}
+
+    def __repr__(self):
+        return "SeededFake()"
+
+
 class TestAlbumentationsWrapper:
     def test_none_is_noop(self, random_patch):
         out = AlbumentationsWrapper()(random_patch)
@@ -97,6 +117,9 @@ class TestAlbumentationsWrapper:
 
     def test_applies_wrapped_transform(self, random_patch):
         class _AddOne:
+            def set_random_seed(self, seed):
+                pass
+
             def __call__(self, *, image):
                 out = np.clip(image.astype(np.int16) + 1, 0, 255).astype(np.uint8)
                 return {"image": out}
@@ -110,6 +133,9 @@ class TestAlbumentationsWrapper:
 
     def test_repr(self):
         class _Identity:
+            def set_random_seed(self, seed):
+                pass
+
             def __call__(self, *, image):
                 return {"image": image}
 
@@ -118,6 +144,89 @@ class TestAlbumentationsWrapper:
 
         wrapper = AlbumentationsWrapper(_Identity())
         assert repr(wrapper) == "AlbumentationsWrapper(Identity())"
+
+
+class TestAlbumentationsSeeding:
+    """The wrapper must carry pipeline-controlled seeds into albumentations.
+
+    Albumentations draws from the numpy global RNG, which PyTorch does not
+    reseed per DataLoader worker, so without this plumbing every forked worker
+    replays an identical augmentation sequence.
+    """
+
+    def test_seeds_wrapped_transform_once_per_reseed(self, random_patch):
+        fake = _SeededFake()
+        wrapper = AlbumentationsWrapper(fake, seed=1)
+
+        for _ in range(5):
+            wrapper(random_patch)
+        assert fake.seeds == [fake.seeds[0]], "seed pushed more than once without a reseed"
+
+        PatchPipeline._reseed_transform(wrapper, (0, 4321))
+        wrapper(random_patch)
+        assert len(fake.seeds) == 2, "pipeline reseed did not reach the wrapper"
+        assert fake.seeds[0] != fake.seeds[1]
+
+    def test_pipeline_reseed_is_reachable(self):
+        """_reseed_transform must replace the wrapper's RNG, not skip it."""
+        wrapper = AlbumentationsWrapper(_SeededFake(), seed=1)
+        before = wrapper._rng
+        PatchPipeline._reseed_transform(wrapper, (0, 99))
+        assert wrapper._rng is not before
+
+    def test_nested_in_compose_is_reached(self, random_patch):
+        fake = _SeededFake()
+        chain = ComposeTransforms([ResizeTransform(32), AlbumentationsWrapper(fake, seed=1)])
+
+        chain(random_patch)
+        first = list(fake.seeds)
+
+        PatchPipeline._reseed_transform(chain, (0, 777))
+        chain(random_patch)
+        assert len(fake.seeds) == len(first) + 1
+        assert fake.seeds[-1] != first[-1]
+
+    def test_distinct_workers_diverge(self, random_patch):
+        """Two workers (distinct pipeline seeds) must not share a sequence."""
+        outputs = []
+        for pid in (1000, 2000):
+            wrapper = AlbumentationsWrapper(_SeededFake(), seed=1)
+            PatchPipeline._reseed_transform(wrapper, (0, pid))
+            outputs.append([wrapper(random_patch).mean() for _ in range(5)])
+
+        assert outputs[0] != outputs[1], "forked workers produced identical augmentations"
+
+    def test_same_base_seed_is_reproducible(self, random_patch):
+        runs = []
+        for _ in range(2):
+            wrapper = AlbumentationsWrapper(_SeededFake(), seed=1)
+            PatchPipeline._reseed_transform(wrapper, (0, 55))
+            runs.append([wrapper(random_patch).mean() for _ in range(5)])
+
+        assert runs[0] == runs[1]
+
+    def test_warns_when_set_random_seed_missing(self, random_patch):
+        class _Legacy:
+            def __call__(self, *, image):
+                return {"image": image}
+
+        wrapper = AlbumentationsWrapper(_Legacy())
+        with pytest.warns(UserWarning, match="set_random_seed"):
+            wrapper(random_patch)
+
+    def test_real_albumentations_diverges_across_workers(self, random_patch):
+        """End-to-end check against the actual albumentations API."""
+        A = pytest.importorskip("albumentations")
+
+        outputs = []
+        for pid in (1000, 2000):
+            wrapper = AlbumentationsWrapper(
+                A.Compose([A.ColorJitter(brightness=0.5, contrast=0.5, p=1.0)])
+            )
+            PatchPipeline._reseed_transform(wrapper, (0, pid))
+            outputs.append([float(wrapper(random_patch).mean()) for _ in range(5)])
+
+        assert outputs[0] != outputs[1]
 
 
 class TestSeededRandomness:

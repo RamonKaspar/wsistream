@@ -220,13 +220,13 @@ pipeline = PatchPipeline(
 
 ## PyTorch batches
 
-`WsiStreamDataset` returns one tensor key per view, together with the same coordinate and metadata keys used by the rest of the PyTorch integration.
+`WsiStreamDataset` returns one tensor key per view, together with the same coordinate and metadata keys used by the rest of the PyTorch integration. The keys are the view names after `count` expansion, so for the DINOv2 multi-crop pipeline above:
 
 ```python
 for batch in loader:
-    global0 = batch["global_0"]  # (B, 3, 224, 224)
-    global1 = batch["global_1"]  # (B, 3, 224, 224)
-    local0 = batch["local_0"]   # (B, 3, 96, 96)
+    global1 = batch["global1"]  # (B, 3, 224, 224), count=1 so the name is kept as-is
+    global2 = batch["global2"]  # (B, 3, 224, 224), count=1 so the name is kept as-is
+    local0 = batch["local_0"]   # (B, 3, 98, 98), count=8 expands to local_0 ... local_7
 
     x = batch["x"]
     y = batch["y"]

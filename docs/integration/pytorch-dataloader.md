@@ -96,8 +96,9 @@ for step, batch in enumerate(mon):
     loss.backward()
     optimizer.step()
 
-    payload = mon.mark_step(extra={"train/loss": float(loss.detach())})
+    payload = mon.mark_step()
     if payload is not None:
+        payload["train/loss"] = float(loss.detach())
         wandb.log(payload, step=step)
 ```
 

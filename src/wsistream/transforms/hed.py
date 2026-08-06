@@ -9,6 +9,8 @@ import numpy as np
 
 from wsistream.transforms.base import PatchTransform
 
+_EPSILON = 1e-6
+
 
 @dataclass
 class HEDColorAugmentation(PatchTransform):
@@ -23,8 +25,9 @@ class HEDColorAugmentation(PatchTransform):
     - ``alpha_i ~ U(1 - sigma, 1 + sigma)`` scales stain concentration
     - ``beta_i ~ U(-sigma_bias, sigma_bias)`` shifts the stain baseline
 
-    ``sigma`` is in the same units the papers quote, so ``sigma=0.05``
-    reproduces Tellez "HED-light" and ``sigma=0.2`` "HED-strong".
+    ``sigma`` is in the same units the papers quote.  Tellez et al. (2018)
+    typically use ``sigma=0.05``; the 2019 follow-up calls the corresponding
+    ``[-0.05, 0.05]`` range "HED-light" and ``[-0.2, 0.2]`` "HED-strong".
 
     Parameters
     ----------
@@ -34,19 +37,21 @@ class HEDColorAugmentation(PatchTransform):
         Optional seed. Overridden by ``PatchPipeline`` seeding.
     sigma_bias : float or None
         Half-width of the additive range. ``None`` (default) reuses ``sigma``,
-        matching the StainTools and HistomicsTK convention. Pass ``0.0`` to
-        disable the additive term.
+        as defined by Tellez et al. (2018). Pass ``0.0`` to disable the
+        additive term.
 
     Notes
     -----
-    Tellez et al. (2019) report intensity ranges of ``[-0.05, 0.05]``
-    ("HED-light") and ``[-0.2, 0.2]`` ("HED-strong") but do not say whether the
-    range covers both terms.  StainTools (``sigma1``, ``sigma2``) and
-    HistomicsTK both default to one value for both, which is the convention
-    followed here.
+    Tellez et al. (2018) define one ``sigma`` for both the multiplicative and
+    additive terms and typically set it to ``0.05``.  Tellez et al. (2019)
+    report ``[-0.05, 0.05]`` as "HED-light" and ``[-0.2, 0.2]`` as
+    "HED-strong".  ``sigma_bias`` is an extension that allows the two terms to
+    be controlled independently; its default preserves the published coupling.
 
-    Those published values are in optical-density units, and ``sigma`` is
-    applied in the same space, so it needs no rescaling.
+    The RGB/HED conversion follows equations 5 and 7 from Tellez et al. (2018):
+    ``S = -log(P + epsilon) M^-1`` and ``P' = exp(-S' M) - epsilon``, with
+    ``epsilon=1e-6``.  The published values are in optical-density units, so
+    ``sigma`` needs no rescaling.
 
     See Also
     --------
@@ -98,13 +103,13 @@ class HEDColorAugmentation(PatchTransform):
         conv = np.asarray(hed_from_rgb)
         inv = np.asarray(rgb_from_hed)
 
-        rgb = np.clip(image.astype(np.float64) / 255.0, 1e-6, 1.0)
-        concentrations = -np.log(rgb) @ conv
+        rgb = image.astype(np.float64) / 255.0
+        concentrations = -np.log(rgb + _EPSILON) @ conv
 
         for ch in range(3):
             alpha = self._rng.uniform(1.0 - self.sigma, 1.0 + self.sigma)
             beta = self._rng.uniform(-sigma_bias, sigma_bias)
             concentrations[:, :, ch] = concentrations[:, :, ch] * alpha + beta
 
-        rgb_out = np.exp(-(concentrations @ inv))
+        rgb_out = np.exp(-(concentrations @ inv)) - _EPSILON
         return np.clip(rgb_out * 255, 0, 255).astype(np.uint8)

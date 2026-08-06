@@ -228,8 +228,9 @@ class PatchPipeline:
         ``MultiMagnificationSampler``.
     seed : int or None
         Seed for all internal RNGs: slide-queue shuffling, the sampler,
-        every transform, every crop, and fork-safe worker reseeding.
-        Set this (not seeds on individual transforms) for reproducibility.
+        every transform, and every crop.  Set this (not seeds on individual
+        transforms) for reproducibility.  ``WsiStreamDataset`` derives a
+        distinct deterministic seed for each DataLoader worker.
     views : list[ViewConfig] or None
         Optional multi-view configuration.  Mutually exclusive with
         ``transforms``.
@@ -305,9 +306,10 @@ class PatchPipeline:
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
         self._coordinate_pools: dict[str, object] = {}
-        # Mix PID into all seeds so workers (spawn or fork) diverge.
+        # PID is only used to detect a fork. An explicit seed must fully
+        # determine every RNG stream, independent of the process running it.
         self._pid_at_init: int = os.getpid()
-        base = (0 if self.seed is None else self.seed, self._pid_at_init)
+        base = self._seed_base()
         self._rng = np.random.default_rng(base)
         # Reseed sampler and transforms with pipeline-controlled seeds
         # so that externally-created RNGs don't collide across workers.
@@ -496,20 +498,19 @@ class PatchPipeline:
     def _reseed_for_worker(self) -> None:
         """Reseed all RNGs if running in a forked worker process.
 
-        For spawn-based workers, ``__post_init__`` re-runs with a new PID
-        so the RNGs already diverge.  For fork-based workers, the pipeline
-        object is copied in-memory and ``__post_init__`` does NOT re-run,
-        so all workers share the same RNG state.  This method detects the
-        fork case (PID changed since init) and reseeds once.
+        ``WsiStreamDataset`` constructs a pipeline inside each worker with a
+        distinct deterministic seed.  This method handles a pipeline object
+        inherited directly through ``fork``: unseeded copies receive fresh
+        entropy, while an explicit seed remains reproducible across processes.
         """
         pid = os.getpid()
         if pid == self._pid_at_init:
             return
 
-        # Fork detected — reseed everything and update the stored PID
-        # so subsequent iterations in this worker don't reseed again.
+        # Fork detected; update the stored PID so subsequent iterations in
+        # this process do not restart the RNG streams again.
         self._pid_at_init = pid
-        base = (0 if self.seed is None else self.seed, pid)
+        base = self._seed_base()
         self._rng = np.random.default_rng(base)
 
         if hasattr(self.sampler, "_rng"):
@@ -520,6 +521,12 @@ class PatchPipeline:
         self._reseed_views(self.views, (*base, 6))
         self._pool_rng = np.random.default_rng((*base, 4))
         self._coordinate_pools.clear()
+
+    def _seed_base(self) -> tuple[int, ...]:
+        """Return the root entropy used to derive every pipeline RNG."""
+        if self.seed is not None:
+            return (self.seed,)
+        return tuple(int(value) for value in np.random.SeedSequence().generate_state(4))
 
     @staticmethod
     def _reseed_transform(transform: PatchTransform | None, base_seed) -> None:

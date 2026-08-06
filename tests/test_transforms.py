@@ -274,11 +274,15 @@ class TestHEDColorAugmentation:
         assert out.dtype == np.uint8
 
     def test_zero_sigma_is_near_identity(self):
-        img = np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8)
+        rng = np.random.default_rng(0)
+        img = rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)
+        img[0, 0] = 0
+        img[0, 1] = 255
+        img[0, 2] = [0, 128, 255]
+
         out = HEDColorAugmentation(sigma=0.0)(img)
-        # With sigma=0, alpha is 1.0 and beta is 0.0 — but the RGB->HED->RGB
-        # round trip has inherent numerical loss from the color deconvolution.
-        assert np.abs(out.astype(int) - img.astype(int)).mean() < 25
+        # The float RGB->HED->RGB round trip can truncate by one uint8 level.
+        assert np.abs(out.astype(int) - img.astype(int)).max() <= 1
 
     def test_rejects_negative_sigma(self):
         with pytest.raises(ValueError, match="sigma must be"):
@@ -325,7 +329,7 @@ class _RecordingRNG:
 class TestHEDMatchesTellez:
     """The perturbation must be s' = alpha * s + beta with both terms uniform.
 
-    Verified against Tellez et al. 2018 (arXiv:1808.05896, sec. IV-B) and the
+    Verified against Tellez et al. 2018 (arXiv:1808.05896, appendix B) and the
     HistomicsTK reference implementation, which draws
     alpha ~ U(1 - sigma1, 1 + sigma1) and beta ~ U(-sigma2, sigma2).
     """
@@ -391,34 +395,45 @@ class TestHEDMatchesTellez:
         assert abs(betas.var() - expected_var) < 0.2 * expected_var
 
     def test_default_bias_reuses_sigma(self):
-        """One sigma drives both terms, as in StainTools and HistomicsTK."""
+        """One sigma drives both terms, as defined by Tellez et al. (2018)."""
         assert HEDColorAugmentation(sigma=0.05).effective_sigma_bias == 0.05
         assert HEDColorAugmentation(sigma=0.2).effective_sigma_bias == 0.2
         # An explicit value always wins, including zero.
         assert HEDColorAugmentation(sigma=0.05, sigma_bias=0.0).effective_sigma_bias == 0.0
         assert HEDColorAugmentation(sigma=0.05, sigma_bias=0.01).effective_sigma_bias == 0.01
 
-    def test_matches_manual_od_decomposition(self):
-        """The transform must decompose in plain OD without skimage's clamp.
-
-        Reference: -log(rgb) @ hed_from_rgb, perturb, then exp(-(c @ rgb_from_hed)).
-        No clamping of negative concentrations, no rescaling by log(1e-6).
-        """
-        from skimage.color import hed_from_rgb, rgb_from_hed
-
-        conv = np.asarray(hed_from_rgb)
-        inv = np.asarray(rgb_from_hed)
-        img = np.full((16, 16, 3), 160, dtype=np.uint8)
+    def test_matches_tellez_equations(self):
+        """Compare against equations 5-7 using the fixed Ruifrok HED matrix."""
+        stain_matrix = np.array(
+            [
+                [0.65, 0.70, 0.29],
+                [0.07, 0.99, 0.11],
+                [0.27, 0.57, 0.78],
+            ]
+        )
+        deconvolution_matrix = np.linalg.inv(stain_matrix)
+        epsilon = 1e-6
+        img = np.array(
+            [
+                [[0, 1, 255], [255, 0, 128], [32, 240, 17]],
+                [[160, 160, 160], [89, 133, 201], [255, 255, 255]],
+            ],
+            dtype=np.uint8,
+        )
         sigma = 0.05
 
         rng = np.random.default_rng(0)
-        rgb = np.clip(img.astype(np.float64) / 255.0, 1e-6, 1.0)
-        c = -np.log(rgb) @ conv
+        rgb = img.astype(np.float64) / 255.0
+        concentrations = -np.log(rgb + epsilon) @ deconvolution_matrix
         for ch in range(3):
-            a = rng.uniform(1 - sigma, 1 + sigma)
-            b = rng.uniform(-sigma, sigma)
-            c[:, :, ch] = c[:, :, ch] * a + b
-        expected = np.clip(np.exp(-(c @ inv)) * 255, 0, 255).astype(np.uint8)
+            alpha = rng.uniform(1 - sigma, 1 + sigma)
+            beta = rng.uniform(-sigma, sigma)
+            concentrations[:, :, ch] = concentrations[:, :, ch] * alpha + beta
+        expected = np.clip(
+            (np.exp(-(concentrations @ stain_matrix)) - epsilon) * 255,
+            0,
+            255,
+        ).astype(np.uint8)
 
         got = HEDColorAugmentation(sigma=sigma, seed=0)(img)
         np.testing.assert_array_equal(got, expected)
@@ -429,8 +444,8 @@ class TestHEDMatchesTellez:
 
         conv = np.asarray(hed_from_rgb)
         img = np.full((8, 8, 3), 240, dtype=np.uint8)
-        rgb = np.clip(img.astype(np.float64) / 255.0, 1e-6, 1.0)
-        c = -np.log(rgb) @ conv
+        rgb = img.astype(np.float64) / 255.0
+        c = -np.log(rgb + 1e-6) @ conv
         has_negative = (c < 0).any()
         assert has_negative, "test image should produce negative concentrations"
 

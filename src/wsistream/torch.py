@@ -255,6 +255,7 @@ class WsiStreamDataset(IterableDataset):
     seed : int or None
         Seed for all internal RNGs: slide-queue order, sampler, transforms,
         and crops.  Set this instead of seeds on individual components.
+        ``None`` (default) draws fresh entropy for every iteration.
     views : list[ViewConfig] or None
         Optional multi-view configuration.  Mutually exclusive with
         ``transforms``; see :class:`~wsistream.pipeline.PatchPipeline`.
@@ -327,8 +328,12 @@ class WsiStreamDataset(IterableDataset):
             # worker branch so the main process (num_workers=0) keeps the user's cv2 setting.
             cv2.setNumThreads(0)
             slides = self._slide_paths[worker_info.id :: worker_info.num_workers]
-            base = (0 if self._seed is None else self._seed) + worker_info.id
-            worker_seed = base + self._iter_count
+            # Map each (iteration, worker) pair to a distinct deterministic seed.
+            worker_seed = (
+                self._seed + self._iter_count * worker_info.num_workers + worker_info.id
+                if self._seed is not None
+                else None
+            )
             logger.debug(
                 "Worker %d/%d: %d slides",
                 worker_info.id,
@@ -337,9 +342,7 @@ class WsiStreamDataset(IterableDataset):
             )
         else:
             slides = self._slide_paths
-            worker_seed = (
-                self._seed + self._iter_count if self._seed is not None else self._iter_count
-            )
+            worker_seed = self._seed + self._iter_count if self._seed is not None else None
 
         if not slides:
             logger.warning("Worker got 0 slides, yielding nothing")

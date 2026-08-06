@@ -246,6 +246,14 @@ class TestSeedDiversity:
         coords2 = [(item["x"], item["y"]) for item in dataset]
         assert coords1 != coords2
 
+    def test_unseeded_instances_use_fresh_entropy(self):
+        first = _make_dataset(n_slides=2, patches_per_slide=5, seed=None)
+        second = _make_dataset(n_slides=2, patches_per_slide=5, seed=None)
+
+        first_coords = [(item["x"], item["y"]) for item in first]
+        second_coords = [(item["x"], item["y"]) for item in second]
+        assert first_coords != second_coords
+
 
 # ── Parameter validation ──
 

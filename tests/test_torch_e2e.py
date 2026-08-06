@@ -261,12 +261,38 @@ class TestMultiWorkerStress:
 
 
 class TestSeedStress:
+    @staticmethod
+    def _multi_worker_coordinates(seed: int):
+        dataset = _make_dataset(n_slides=4, patches_per_slide=3, seed=seed)
+        loader = DataLoader(
+            dataset,
+            batch_size=1,
+            num_workers=2,
+            multiprocessing_context="spawn",
+        )
+        coordinates = []
+        for batch in loader:
+            coordinates.append(
+                (
+                    batch["slide_path"][0],
+                    int(batch["x"][0]),
+                    int(batch["y"][0]),
+                    int(batch["level"][0]),
+                )
+            )
+        return sorted(coordinates)
+
     def test_same_seed_same_stream(self):
         ds1 = _make_dataset(n_slides=2, patches_per_slide=5, seed=42)
         ds2 = _make_dataset(n_slides=2, patches_per_slide=5, seed=42)
         c1 = [(item["x"], item["y"]) for item in ds1]
         c2 = [(item["x"], item["y"]) for item in ds2]
         assert c1 == c2
+
+    def test_same_seed_same_multi_worker_stream(self):
+        first = self._multi_worker_coordinates(seed=42)
+        second = self._multi_worker_coordinates(seed=42)
+        assert first == second
 
 
 # ── Edge cases ──

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import multiprocessing as mp
+import os
 from collections import Counter
 
 import numpy as np
@@ -68,6 +70,23 @@ class _RandomOffsetTransform(PatchTransform):
         delta = int(self._rng.integers(1, 8))
         out = np.clip(image.astype(np.int16) + delta, 0, 255)
         return out.astype(np.uint8)
+
+
+def _pipeline_seed_probe(connection, seed: int) -> None:
+    """Return RNG samples from a fresh spawned process."""
+    pipeline = _make_pipeline(
+        n_slides=2,
+        seed=seed,
+        transforms=ComposeTransforms([_RandomOffsetTransform()]),
+    )
+    transform = pipeline.transforms.transforms[0]
+    state = (
+        pipeline._rng.integers(0, 2**63, size=8).tolist(),
+        pipeline.sampler._rng.integers(0, 2**63, size=8).tolist(),
+        transform._rng.integers(0, 2**63, size=8).tolist(),
+    )
+    connection.send((os.getpid(), state))
+    connection.close()
 
 
 class _WorkerProbeDataset(IterableDataset):
@@ -251,6 +270,32 @@ class TestRoundRobin:
 
 
 class TestSlideSampling:
+    @staticmethod
+    def _seed_state_in_spawned_process(seed: int):
+        context = mp.get_context("spawn")
+        receive, send = context.Pipe(duplex=False)
+        process = context.Process(target=_pipeline_seed_probe, args=(send, seed))
+        process.start()
+        send.close()
+        try:
+            assert receive.poll(20), "spawned seed probe did not return"
+            result = receive.recv()
+        finally:
+            receive.close()
+            process.join(20)
+            if process.is_alive():
+                process.terminate()
+                process.join()
+        assert process.exitcode == 0
+        return result
+
+    def test_seed_is_reproducible_across_processes(self):
+        first_pid, first_state = self._seed_state_in_spawned_process(42)
+        second_pid, second_state = self._seed_state_in_spawned_process(42)
+
+        assert first_pid != second_pid
+        assert first_state == second_state
+
     def test_random_slide_sampling_is_seeded(self):
         # Use 20 slides so that a random permutation equalling alphabetical
         # order is astronomically unlikely (probability 1/20! ≈ 2e-19).

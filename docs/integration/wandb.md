@@ -99,8 +99,9 @@ for step, batch in enumerate(mon):
     optimizer.step()
     optimizer.zero_grad()
 
-    payload = mon.mark_step(extra={"train/loss": float(loss)})
+    payload = mon.mark_step()
     if payload is not None:
+        payload["train/loss"] = float(loss.detach())
         wandb.log(payload, step=step)
 ```
 
@@ -108,15 +109,19 @@ Each payload includes:
 
 | Key | Description |
 |-----|-------------|
-| `loader/data_wait_ms` | Average time waiting for the next batch (per step) |
-| `loader/compute_ms` | Average time in the training step (per step) |
-| `loader/step_ms` | Total step time (data + compute) |
-| `loader/data_fraction` | Fraction of step time spent waiting for data |
-| `loader/batches_per_sec` | Training step throughput |
-| `loader/patches_per_sec` | Patch throughput |
+| `loader/data_wait_ms` | Average host time blocked waiting for the next batch |
+| `loader/compute_ms` | Average host compute time, or CUDA stream time when a CUDA device is configured |
+| `loader/step_ms` | Average wall-clock step time |
+| `loader/data_fraction` | Fraction of wall-clock time blocked waiting for data |
+| `loader/batches_per_sec` | Wall-clock training step throughput |
+| `loader/patches_per_sec` | Wall-clock patch throughput |
 | `pipeline/*` | All keys from `dataset.stats_dict()` |
 
-If `loader/data_fraction` is consistently above 0.5, the data pipeline is the bottleneck — increase `num_workers` or check your storage I/O. See [Benchmarking](benchmarking.md) for how to find optimal settings before training.
+On CUDA, `MonitoredLoader` records events on the stream that is current when each batch is yielded. Calls to `mark_step()` that return `None` record timing events asynchronously. At reporting boundaries, and when `lifetime_stats()` is called with pending events, the CUDA device is synchronized before the event timings are resolved. Data loading and CUDA work can overlap, so `data_wait_ms + compute_ms` does not necessarily equal `step_ms`. Throughput and `data_fraction` use elapsed wall time and do not double-count that overlap. Increasing `log_every` reduces the frequency of reporting boundaries and their synchronization overhead.
+
+Convert CUDA-derived scalars such as the loss only after `mark_step()` returns a payload. Calling `float(loss)` or `loss.item()` while constructing `extra` on every step can synchronize CUDA and remove the overlap that the monitor preserves.
+
+A high `loader/data_fraction` means the host spent much of the measured window blocked in the DataLoader. It is a useful signal, but does not by itself identify the cause or prove that the GPU was idle. Compare it with accelerator utilization and benchmark worker, storage, and transform settings before changing the pipeline. See [Benchmarking](benchmarking.md) for the configuration sweep.
 
 !!! note "Live stats accuracy"
     With `num_workers=0`, pipeline stats are exact on every step. With `num_workers>0`, stats are aggregated from worker processes and may lag by up to 16 patches per worker between flushes. Final totals at the end of iteration are always correct.
@@ -131,8 +136,9 @@ mon = MonitoredLoader(loader, dataset=dataset, device=device, log_every=100)
 for step, batch in enumerate(mon):
     # ... training step ...
 
-    payload = mon.mark_step(extra={"train/loss": float(loss)})
+    payload = mon.mark_step()
     if payload is not None and rank == 0:
+        payload["train/loss"] = float(loss.detach())
         wandb.log(payload, step=step)
 ```
 

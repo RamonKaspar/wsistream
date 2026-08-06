@@ -110,8 +110,9 @@ def main():
         loss.backward()
         optimizer.step()
 
-        payload = mon.mark_step(extra={"train/loss": float(loss.detach())})
+        payload = mon.mark_step()
         if payload is not None:  # returned every log_every steps
+            payload["train/loss"] = float(loss.detach())
             logger.info(
                 "Step %d/%d | %s",
                 step + 1,

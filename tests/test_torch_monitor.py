@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import time
+from unittest.mock import Mock
 
+import pytest
+import torch
 from torch.utils.data import DataLoader
 
 from tests.conftest import FakeBackend
 from wsistream.sampling.random import RandomSampler
 from wsistream.tissue.otsu import OtsuTissueDetector
 from wsistream.torch import MonitoredLoader, WsiStreamDataset
+from wsistream.torch_monitor import _Accumulator
 from wsistream.transforms import ResizeTransform
 from wsistream.views import ViewConfig
 
@@ -37,6 +41,18 @@ LOADER_KEYS = {
     "loader/batches_per_sec",
     "loader/patches_per_sec",
 }
+
+
+class _FakeCudaEvent:
+    def __init__(self, elapsed_ms=2.0):
+        self.elapsed_ms = elapsed_ms
+        self.recorded_stream = None
+
+    def record(self, stream):
+        self.recorded_stream = stream
+
+    def elapsed_time(self, _end_event):
+        return self.elapsed_ms
 
 
 class TestBasicIteration:
@@ -84,6 +100,24 @@ class TestBasicIteration:
 
 
 class TestMetricValues:
+    def test_overlapping_times_are_not_added_for_throughput(self):
+        accumulator = _Accumulator(
+            data_wait_ns=6_000_000,
+            compute_ns=8_000_000,
+            wall_ns=10_000_000,
+            step_count=1,
+            patch_count=4,
+        )
+
+        metrics = accumulator.to_dict()
+
+        assert metrics["loader/data_wait_ms"] == pytest.approx(6.0)
+        assert metrics["loader/compute_ms"] == pytest.approx(8.0)
+        assert metrics["loader/step_ms"] == pytest.approx(10.0)
+        assert metrics["loader/data_fraction"] == pytest.approx(0.6)
+        assert metrics["loader/batches_per_sec"] == pytest.approx(100.0)
+        assert metrics["loader/patches_per_sec"] == pytest.approx(400.0)
+
     def test_data_wait_positive(self):
         dataset = _make_dataset()
         loader = DataLoader(dataset, batch_size=4, num_workers=0)
@@ -217,7 +251,9 @@ class TestWindowAndLifetime:
 
 
 class TestNoDevice:
-    def test_no_cuda_sync_without_device(self):
+    def test_no_cuda_sync_without_device(self, monkeypatch):
+        synchronize = Mock()
+        monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
         dataset = _make_dataset()
         loader = DataLoader(dataset, batch_size=4, num_workers=0)
         mon = MonitoredLoader(loader, device=None, log_every=1)
@@ -225,6 +261,120 @@ class TestNoDevice:
         next(iter(mon))
         payload = mon.mark_step()
         assert payload is not None
+        synchronize.assert_not_called()
+
+
+class TestCudaDevice:
+    def test_synchronizes_only_at_log_boundary_on_selected_device(self, monkeypatch):
+        stream = object()
+        events = []
+
+        def make_event(*, enable_timing):
+            assert enable_timing is True
+            event = _FakeCudaEvent()
+            events.append(event)
+            return event
+
+        current_stream = Mock(return_value=stream)
+        synchronize = Mock()
+        monkeypatch.setattr(torch.cuda, "Event", make_event)
+        monkeypatch.setattr(torch.cuda, "current_stream", current_stream)
+        monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
+
+        loader = [{"image": torch.zeros(2, 3, 4, 4)} for _ in range(3)]
+        mon = MonitoredLoader(loader, device="cuda:1", log_every=3)
+        iterator = iter(mon)
+
+        for _ in range(2):
+            next(iterator)
+            assert mon.mark_step() is None
+            synchronize.assert_not_called()
+
+        next(iterator)
+        payload = mon.mark_step()
+
+        assert payload is not None
+        synchronize.assert_called_once_with(torch.device("cuda:1"))
+        assert [call.args for call in current_stream.call_args_list] == [
+            (torch.device("cuda:1"),)
+        ] * 3
+        assert len(events) == 6
+        assert all(event.recorded_stream is stream for event in events)
+        assert payload["loader/compute_ms"] == pytest.approx(2.0)
+
+    def test_lifetime_stats_flush_pending_cuda_events(self, monkeypatch):
+        stream = object()
+        synchronize = Mock()
+        monkeypatch.setattr(
+            torch.cuda,
+            "Event",
+            lambda *, enable_timing: _FakeCudaEvent(),
+        )
+        monkeypatch.setattr(torch.cuda, "current_stream", Mock(return_value=stream))
+        monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
+
+        mon = MonitoredLoader(
+            [{"image": torch.zeros(2, 3, 4, 4)}],
+            device="cuda:0",
+            log_every=10,
+        )
+        next(iter(mon))
+        assert mon.mark_step() is None
+        synchronize.assert_not_called()
+
+        lifetime = mon.lifetime_stats()
+
+        synchronize.assert_called_once_with(torch.device("cuda:0"))
+        assert lifetime["loader/compute_ms"] == pytest.approx(2.0)
+
+        assert mon.lifetime_stats() == lifetime
+        synchronize.assert_called_once()
+
+    def test_skipped_mark_step_preserves_cuda_timing(self, monkeypatch):
+        stream = object()
+        events = []
+
+        def make_event(*, enable_timing):
+            assert enable_timing is True
+            event = _FakeCudaEvent()
+            events.append(event)
+            return event
+
+        synchronize = Mock()
+        monkeypatch.setattr(torch.cuda, "Event", make_event)
+        monkeypatch.setattr(torch.cuda, "current_stream", Mock(return_value=stream))
+        monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
+
+        loader = [{"image": torch.zeros(2, 3, 4, 4)} for _ in range(2)]
+        mon = MonitoredLoader(loader, device="cuda:0", log_every=1)
+        iterator = iter(mon)
+
+        next(iterator)
+        next(iterator)  # Finish the first step without mark_step().
+        payload = mon.mark_step()
+
+        assert payload is not None
+        synchronize.assert_called_once_with(torch.device("cuda:0"))
+        assert len(events) == 4
+        assert all(event.recorded_stream is stream for event in events)
+        assert payload["loader/compute_ms"] == pytest.approx(2.0)
+        inferred_batch_size = payload["loader/patches_per_sec"] / payload["loader/batches_per_sec"]
+        assert inferred_batch_size == pytest.approx(2)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable")
+    def test_real_cuda_events(self):
+        device = torch.device("cuda", torch.cuda.current_device())
+        loader = [{"image": torch.ones(8, 3, 64, 64)}]
+        mon = MonitoredLoader(loader, device=device, log_every=1)
+
+        batch = next(iter(mon))
+        image = batch["image"].to(device)
+        _ = image.square().sum()
+        payload = mon.mark_step()
+
+        assert payload is not None
+        assert payload["loader/compute_ms"] >= 0
+        assert payload["loader/step_ms"] > 0
 
 
 class TestWithWorkers:
@@ -257,3 +407,5 @@ class TestMarkStepNotCalled:
 
         assert payload is not None
         assert payload["loader/step_ms"] > 0
+        inferred_batch_size = payload["loader/patches_per_sec"] / payload["loader/batches_per_sec"]
+        assert inferred_batch_size == pytest.approx(4)

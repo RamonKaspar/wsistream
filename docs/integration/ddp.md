@@ -79,8 +79,9 @@ def main():
         loss.backward()
         optimizer.step()
 
-        payload = mon.mark_step(extra={"train/loss": float(loss.detach())})
+        payload = mon.mark_step()
         if payload is not None and rank == 0:  # all ranks call mark_step, only rank 0 logs
+            payload["train/loss"] = float(loss.detach())
             print(payload)
 
         if step + 1 >= total_steps:

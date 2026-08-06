@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import multiprocessing as mp
+
 import cv2
 import numpy as np
 import pytest
@@ -311,6 +313,29 @@ class TestMultiWorker:
         stats = dataset.stats_dict()
         assert stats["pipeline/patches_extracted"] == 12
         assert stats["pipeline/slides_processed"] == 4
+
+    @pytest.mark.parametrize("worker_context", mp.get_all_start_methods())
+    def test_all_worker_contexts_aggregate_stats(self, worker_context, monkeypatch):
+        import wsistream.torch as torch_module
+
+        if "fork" in mp.get_all_start_methods():
+            # Simulate constructing the dataset under Linux's fork-default context
+            # without changing the process-wide start method for other tests.
+            monkeypatch.setattr(torch_module, "mp", mp.get_context("fork"))
+        dataset = _make_dataset(n_slides=4, patches_per_slide=3)
+        loader = DataLoader(
+            dataset,
+            batch_size=2,
+            num_workers=2,
+            multiprocessing_context=worker_context,
+        )
+
+        list(loader)
+
+        stats = dataset.stats_dict()
+        assert stats["pipeline/patches_extracted"] == 12
+        assert stats["pipeline/slides_processed"] == 4
+        assert stats["pipeline/slides_unique"] == 4
 
 
 class TestWorkerOpenCVThreads:

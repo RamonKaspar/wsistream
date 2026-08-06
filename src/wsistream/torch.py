@@ -79,18 +79,22 @@ class _StatsAggregator:
     """
 
     def __init__(self) -> None:
+        # Fork-context synchronization primitives cannot be sent to spawn or
+        # forkserver workers.  Spawn-context primitives remain usable when
+        # inherited by fork workers, so use the portable context explicitly.
+        context = mp.get_context("spawn")
         # Shared-memory counters (additive)
-        self._slides_processed = mp.Value("i", 0)
-        self._slides_failed = mp.Value("i", 0)
-        self._patches_extracted = mp.Value("i", 0)
-        self._patches_filtered = mp.Value("i", 0)
-        self._error_count = mp.Value("i", 0)
-        self._tf_count = mp.Value("i", 0)
-        self._tf_total = mp.Value("d", 0.0)
-        self._tf_min = mp.Value("d", float("inf"))
-        self._tf_max = mp.Value("d", float("-inf"))
+        self._slides_processed = context.Value("i", 0)
+        self._slides_failed = context.Value("i", 0)
+        self._patches_extracted = context.Value("i", 0)
+        self._patches_filtered = context.Value("i", 0)
+        self._error_count = context.Value("i", 0)
+        self._tf_count = context.Value("i", 0)
+        self._tf_total = context.Value("d", 0.0)
+        self._tf_min = context.Value("d", float("inf"))
+        self._tf_max = context.Value("d", float("-inf"))
         # Sparse histogram queue (flushed per-slide, not per-patch)
-        self._histogram_queue: mp.SimpleQueue = mp.SimpleQueue()
+        self._histogram_queue = context.SimpleQueue()
         # Main-process-only accumulators
         self._slides_seen: set[str] = set()
         self._mpp_counts: dict = {}

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from wsistream.backends.base import SlideBackend
 from wsistream.types import SlideProperties
+
+if TYPE_CHECKING:
+    from openslide import OpenSlide
 
 
 class OpenSlideBackend(SlideBackend):
@@ -17,7 +22,7 @@ class OpenSlideBackend(SlideBackend):
     """
 
     def __init__(self) -> None:
-        self._slide = None
+        self._slide: OpenSlide | None = None
         self._path: str | None = None
 
     def open(self, path: str) -> None:

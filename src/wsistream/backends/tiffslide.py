@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from wsistream.backends.base import SlideBackend
 from wsistream.types import SlideProperties
+
+if TYPE_CHECKING:
+    from tiffslide import TiffSlide
 
 
 class TiffSlideBackend(SlideBackend):
@@ -17,7 +22,7 @@ class TiffSlideBackend(SlideBackend):
     """
 
     def __init__(self) -> None:
-        self._slide = None
+        self._slide: TiffSlide | None = None
         self._path: str | None = None
 
     def open(self, path: str) -> None:

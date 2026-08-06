@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import numpy as np
 import pytest
 
@@ -205,6 +207,10 @@ class TestValidation:
         with pytest.raises(ValueError, match="max_retries"):
             ContinuousMagnificationSampler(max_retries=0)
 
+    def test_invalid_max_consecutive_failures(self):
+        with pytest.raises(ValueError, match="max_consecutive_failures"):
+            ContinuousMagnificationSampler(max_consecutive_failures=0)
+
 
 # ---------------------------------------------------------------------------
 # Sampling behaviour
@@ -253,6 +259,27 @@ class TestSampling:
         )
         coords = list(sampler.sample(fake_slide, no_tissue_mask))
         assert len(coords) == 0
+
+    def test_retry_budgets_are_independent(self, fake_slide):
+        class CountingMask:
+            def __init__(self):
+                self.attempts = 0
+
+            def contains_tissue(self, *args: object) -> bool:
+                self.attempts += 1
+                return False
+
+        mask = CountingMask()
+        sampler = ContinuousMagnificationSampler(
+            num_patches=1,
+            output_size=64,
+            max_retries=3,
+            max_consecutive_failures=2,
+            seed=42,
+        )
+
+        assert list(sampler.sample(fake_slide, cast(TissueMask, mask))) == []
+        assert mask.attempts == 6
 
     def test_tiny_slide_does_not_loop_forever(self):
         """A slide too small for most mpp values should terminate."""
@@ -383,6 +410,44 @@ class TestNoMppFallback:
         for c in coords:
             assert c.level == 0
             assert c.patch_size == 64
+
+    def test_uses_configured_location_retry_budget(self, monkeypatch):
+        class NoMppBackend(FakeBackend):
+            def get_properties(self):
+                p = super().get_properties()
+                return SlideProperties(
+                    path=p.path,
+                    dimensions=p.dimensions,
+                    level_count=p.level_count,
+                    level_dimensions=p.level_dimensions,
+                    level_downsamples=p.level_downsamples,
+                    mpp=None,
+                    vendor=p.vendor,
+                )
+
+        attempts = 0
+
+        def reject_tissue(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            return False
+
+        monkeypatch.setattr(TissueMask, "contains_tissue", reject_tissue)
+        slide = SlideHandle("no_mpp.svs", backend=NoMppBackend())
+        mask = TissueMask(
+            mask=np.zeros((100, 100), dtype=bool),
+            downsample=40.96,
+            slide_dimensions=(4096, 4096),
+        )
+        sampler = ContinuousMagnificationSampler(
+            num_patches=1,
+            output_size=64,
+            max_retries=3,
+            seed=42,
+        )
+
+        assert list(sampler.sample(slide, mask)) == []
+        assert attempts == 3
 
 
 # ---------------------------------------------------------------------------

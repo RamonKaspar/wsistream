@@ -94,7 +94,8 @@ sampler = ContinuousMagnificationSampler(
     lambda_maxavg=1.0,                   # entropy regularisation (maxavg only)
     num_patches=-1,                      # -1 for infinite
     tissue_threshold=0.4,
-    max_retries=50,
+    max_retries=50,                      # tissue-location attempts per target MPP
+    max_consecutive_failures=100,        # stop after this many failed target MPPs
     seed=42,
 )
 ```

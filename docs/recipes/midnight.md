@@ -124,9 +124,9 @@ pipeline = PatchPipeline(
 | Per-crop color augmentations | Not specified — unknown if used alongside HED | Not included in wsistream config | **Unverified** — OpenMidnight does apply them alongside HED, see below |
 | Normalization | mean/std = 0.5 | Training code | Exact for Kaiko-FM (Aben et al.); not explicitly stated for Midnight |
 
-## OpenMidnight, the reference implementation
+## OpenMidnight, an open replication
 
-kaiko's public [midnight repo](https://github.com/kaiko-ai/midnight) contains evaluation code only. [OpenMidnight](https://github.com/MedARC-AI/OpenMidnight) (Sophont/MedARC) is an open replication that does publish its data pipeline. It is a replication, not kaiko's code, so it shows one working implementation of the recipe rather than what kaiko did. It diverges from the paper in several places:
+kaiko's public [midnight repo](https://github.com/kaiko-ai/midnight) contains evaluation code only. [OpenMidnight](https://github.com/MedARC-AI/OpenMidnight) (Sophont/MedARC) publishes its data pipeline and describes itself as an "improved replication", reporting better average benchmark performance than Midnight-12K. It is neither kaiko's code nor a neutral reference, so it shows one working implementation of the recipe rather than what kaiko did. It diverges from the paper in several places:
 
 | Step | Paper | OpenMidnight | wsistream recipe |
 |------|-------|--------------|------------------|
@@ -135,11 +135,11 @@ kaiko's public [midnight repo](https://github.com/kaiko-ai/midnight) contains ev
 | Foreground mask | U-Net at thumbnail scale | **None**, no mask stage at all | `HSVTissueDetector` |
 | Foreground threshold | 40% | **No equivalent** (no mask to threshold) | `tissue_threshold=0.4` |
 | Per-tile HSV filter | ≥60% in hue [90,180], sat [8,255], val [103,255] | Same bounds, `ratio > 0.6`, applied **during precompute**. The copy in `SlideDataset.hsv` is never called | `HSVPatchFilter(min_pixel_fraction=0.6)` |
-| Magnifications | 0.25, 0.5, 1.0, 2.0 µm/px | **Every pyramid level**, one accepted patch per level per pass, no µm/px targeting | `target_mpps=[0.25, 0.5, 1.0, 2.0]` |
-| HED augmentation | Not specified | `s_i + U(-0.05, 0.05)` on `skimage.rgb2hed`, additive only, `p=0.5`, clipped to [0,1] | `HEDColorAugmentation(sigma=0.05)`, multiplicative |
+| Magnifications | 0.25, 0.5, 1.0, 2.0 µm/px | **Every pyramid level**, no µm/px targeting. At most one accepted patch per level per pass, and none if 1000 draws are all rejected | `target_mpps=[0.25, 0.5, 1.0, 2.0]` |
+| HED augmentation | HED perturbation (sigma not stated) | `s_i + U(-0.05, 0.05)` on `skimage.rgb2hed`, additive only, `p=0.5`, clipped to [0,1] | `HEDColorAugmentation(sigma=0.05)`, multiplicative + additive in OD units |
 | DINOv2 global crops | 224px (paper-stated) | `global_crops_size: 224`, `scale (0.32, 1.0)`, count 2 | `size=224, scale=(0.32, 1.0), count=2` |
 | DINOv2 local crops | 98px (paper-stated) | `local_crops_size: 98` (overrides the 96 default), `scale (0.05, 0.32)`, count 8 | `size=98, scale=(0.05, 0.32), count=8` |
-| Per-crop augmentations | Not specified | ColorJitter(0.2, 0.2, 0.1, 0.05) p=0.8, RandomGrayscale p=0.2, GaussianBlur p=1.0/0.1/0.5, HorizontalFlip p=0.5. RandStainNA and 90° rotation present but commented out | Not included by default |
+| Per-crop augmentations | Not specified | ColorJitter(0.2, 0.2, 0.1, 0.05) p=0.8, RandomGrayscale p=0.2, HorizontalFlip p=0.5, GaussianBlur constructed with p=1.0/0.1/0.5 but [effectively 0%/90%/50%](../components/views.md#dinov2-style-multi-crop-for-pathology). RandStainNA and 90° rotation present but commented out | Not included by default |
 
 Before trying to match OpenMidnight's HED via `sigma_bias`, read the [scale warning](../components/transforms.md#hedcoloraugmentation): their additive perturbation sits in a much more aggressive regime than `sigma=0.05` suggests.
 

@@ -20,22 +20,18 @@ from wsistream.transforms import HEDColorAugmentation
 
 transform = HEDColorAugmentation(
     sigma=0.05,       # alpha ~ U(1 - sigma, 1 + sigma); 0.05 = Tellez "light", 0.2 = "strong"
-    sigma_bias=0.0,   # beta ~ U(-sigma_bias, sigma_bias); disabled by default, see warning
+    sigma_bias=None,  # beta ~ U(-sigma_bias, sigma_bias); None reuses sigma
     seed=None,        # random seed
 )
 ```
 
-`sigma` controls the multiplicative term. Higher values produce more aggressive color variation.
+One `sigma` drives both terms, matching the [StainTools](https://github.com/Peter554/StainTools/blob/master/staintools/stain_augmentor.py) and [HistomicsTK](https://digitalslidearchive.github.io/HistomicsTK/histomicstk.preprocessing.augmentation.html) convention. Set `sigma_bias` to decouple them, or to `0.0` to drop the additive term. Higher values produce more aggressive color variation.
 
-!!! warning "`sigma` and `sigma_bias` are not on the same scale"
-    `alpha` is a ratio, so it is invariant to the stain-space convention and the published sigma values port directly. `beta` is an absolute offset in stain space, so its meaning depends on that convention.
-
-    The reference implementations that apply the published sigma to `beta` ([HistomicsTK](https://digitalslidearchive.github.io/HistomicsTK/histomicstk.preprocessing.augmentation.html), StainTools) work in SDA space scaled to roughly `[0, 255]`. wsistream uses `skimage.color.separate_stains`, whose output for typical H&E tissue has channel means near `0.02` and maxima near `0.25`. A `beta` of +/-0.05 there is several times the channel mean: it swamps the stain signal and turns tissue yellow, cyan or purple instead of producing a plausible stain shift.
-
-    `sigma_bias` therefore defaults to `0.0`. If you enable it, scale it to your data's stain-channel magnitude (order `1e-3` for skimage HED output) and inspect the output visually. For reference, [OpenMidnight](https://github.com/MedARC-AI/OpenMidnight) applies `s_i + U(-0.05, 0.05)` to `skimage.rgb2hed` output with no multiplicative term (`dinov2/data/augmentations.py`, class `hed_mod`), which sits deliberately in this aggressive regime.
+!!! note "Units"
+    The perturbation is applied in optical-density space, so `sigma` means what the papers mean and needs no rescaling. `skimage.color.separate_stains` returns OD divided by `log(1e-6)`, so applying the published `0.05` to its raw output would be about 14x too strong and shifts tissue to yellow, cyan and purple. [OpenMidnight](https://github.com/MedARC-AI/OpenMidnight) does exactly that (`dinov2/data/augmentations.py`, class `hed_mod`).
 
 !!! tip "Alternative: `albumentations.HEStain`"
-    `HEDColorAugmentation` uses skimage's **fixed** HED deconvolution matrix, so it perturbs stain channels defined by a global average rather than by your slide's actual stain vectors. [`A.HEStain`](https://explore.albumentations.ai/transform/HEStain) estimates the stain matrix per image (Macenko or Vahadane) and applies both a multiplicative and an additive term on its own concentration scale, which sidesteps the scale trap above. Prefer it when stain vectors vary a lot across your cohort; see [Stain augmentation via albumentations](#stain-augmentation-via-albumentations) below.
+    `HEDColorAugmentation` always uses skimage's **fixed** HED deconvolution matrix, so it perturbs stain channels defined by a global average rather than by your slide's actual stain vectors. [`A.HEStain`](https://explore.albumentations.ai/transform/HEStain) can estimate the stain matrix from the image when `method="macenko"` or `method="vahadane"`; its default `method="random_preset"` instead picks from predefined matrices. It applies both a multiplicative and an additive term on its own concentration scale, so its numbers are not comparable to `sigma` here. Prefer it when stain vectors vary a lot across your cohort; see [Stain augmentation via albumentations](#stain-augmentation-via-albumentations) below.
 
 ### NormalizeTransform
 
@@ -102,16 +98,16 @@ transform = AlbumentationsWrapper(A.Compose([
     A.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1, p=0.8),
     A.ToGray(p=0.2),
     A.GaussianBlur(blur_limit=7, sigma_limit=(0.1, 2.0), p=0.5),
-    A.Solarize(threshold=128, p=0.2),
+    A.Solarize(threshold_range=(0.5, 0.5), p=0.2),  # 128/255, normalised
 ]))
 ```
 
 !!! note "Seeding across DataLoader workers"
-    Albumentations keeps its own RNG, seeded from the numpy global RNG. PyTorch does not reseed the numpy global per DataLoader worker, so with fork-based workers every worker would otherwise replay the same augmentation sequence. `AlbumentationsWrapper` prevents this: it owns an RNG that `PatchPipeline` reseeds per worker and pushes a derived seed into albumentations via `set_random_seed`. Set `seed` on `PatchPipeline`, not on the wrapper. This requires albumentations >= 2.0; with older versions the wrapper warns and augmentations stay tied to the numpy global RNG.
+    Albumentations initialises its RNG state at construction time. Under fork-based DataLoader workers the constructed object is copied in memory, so all workers share the same initial state and replay identical augmentations. `AlbumentationsWrapper` prevents this: it owns an RNG that `PatchPipeline` reseeds per worker and pushes a derived seed into albumentations via `set_random_seed`. Set `seed` on `PatchPipeline`, not on the wrapper. `set_random_seed` was added in albumentations 1.4.21 (absent in 1.4.18); with anything older the wrapper warns.
 
 ### Stain augmentation via albumentations
 
-Albumentations (>= 2.0) includes a built-in [`HEStain`](https://explore.albumentations.ai/transform/HEStain) transform that performs Macenko or Vahadane stain augmentation — decomposing the image into stain concentration channels, randomly perturbing them, and reconstructing. This is a more principled alternative to `HEDColorAugmentation` for simulating staining variation across labs and scanners.
+Albumentations (>= 2.0) includes a built-in [`HEStain`](https://explore.albumentations.ai/transform/HEStain) transform that decomposes the image into stain concentration channels, randomly perturbs them, and reconstructs. Its default `method="random_preset"` draws from predefined stain matrices; pass `method="macenko"` or `"vahadane"` to estimate the matrix from each image. This is a more principled alternative to `HEDColorAugmentation` for simulating staining variation across labs and scanners.
 
 ```python
 import albumentations as A

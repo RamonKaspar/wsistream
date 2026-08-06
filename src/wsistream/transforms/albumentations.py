@@ -16,17 +16,18 @@ class AlbumentationsWrapper(PatchTransform):
     """
     Wrap any albumentations.Compose as a PatchTransform.
 
-    Albumentations keeps its own RNG, seeded from the numpy global RNG when the
-    pipeline is constructed. Neither PyTorch nor wsistream reseeds the numpy
-    global per DataLoader worker, so forked workers would otherwise inherit a
-    single RNG state and replay the exact same augmentation sequence. To
-    prevent that, this wrapper owns an RNG that ``PatchPipeline`` reseeds per
-    worker, and pushes a seed derived from it into albumentations on the first
-    call after every reseed.
+    Albumentations initialises its RNG state at construction time.  Under
+    fork-based DataLoader workers the constructed object is copied in memory,
+    so all workers share the same initial RNG state and replay identical
+    augmentation sequences.  (PyTorch does reseed the numpy global per worker,
+    but albumentations is not fully governed by that global even after
+    ``set_random_seed``.)  To prevent this, the wrapper owns an RNG that
+    ``PatchPipeline`` reseeds per worker, and pushes a derived seed into
+    albumentations on the first call after every reseed.
 
-    Requires albumentations >= 2.0, which provides ``set_random_seed``. With
-    older versions the wrapper warns and augmentations stay tied to the numpy
-    global RNG.
+    Needs ``set_random_seed``, added in albumentations 1.4.21 (absent in
+    1.4.18). With anything older the wrapper warns once and augmentations stay
+    tied to the numpy global RNG.
 
     Parameters
     ----------
@@ -74,7 +75,7 @@ class AlbumentationsWrapper(PatchTransform):
                 "The wrapped transform has no set_random_seed(); albumentations "
                 "augmentations fall back to the numpy global RNG and will repeat "
                 "identically across forked DataLoader workers. Upgrade to "
-                "albumentations >= 2.0.",
+                "albumentations >= 1.4.21.",
                 UserWarning,
                 stacklevel=3,
             )

@@ -281,10 +281,45 @@ class TestHEDColorAugmentation:
         assert np.abs(out.astype(int) - img.astype(int)).mean() < 25
 
     def test_rejects_negative_sigma(self):
-        with pytest.raises(ValueError, match="sigma must be >= 0"):
+        with pytest.raises(ValueError, match="sigma must be"):
             HEDColorAugmentation(sigma=-0.1)
-        with pytest.raises(ValueError, match="sigma_bias must be >= 0"):
+        with pytest.raises(ValueError, match="sigma_bias must be"):
             HEDColorAugmentation(sigma_bias=-0.1)
+
+    def test_rejects_nan_and_infinity(self):
+        for val in [float("nan"), float("inf")]:
+            with pytest.raises(ValueError, match="sigma must be"):
+                HEDColorAugmentation(sigma=val)
+            with pytest.raises(ValueError, match="sigma_bias must be"):
+                HEDColorAugmentation(sigma_bias=val)
+
+    def test_positional_arg_compatibility(self):
+        """HEDColorAugmentation(0.05, 42) must set seed=42, not sigma_bias=42."""
+        t = HEDColorAugmentation(0.05, 42)
+        assert t.sigma == 0.05
+        assert t.seed == 42
+        assert t.sigma_bias is None
+
+
+class _RecordingRNG:
+    """Wraps a Generator and records which distribution production asks for."""
+
+    def __init__(self, rng):
+        self._rng = rng
+        self.calls = []
+
+    def uniform(self, low, high, *args, **kwargs):
+        value = self._rng.uniform(low, high, *args, **kwargs)
+        self.calls.append(("uniform", low, high, value))
+        return value
+
+    def normal(self, *args, **kwargs):
+        value = self._rng.normal(*args, **kwargs)
+        self.calls.append(("normal", None, None, value))
+        return value
+
+    def __getattr__(self, name):
+        return getattr(self._rng, name)
 
 
 class TestHEDMatchesTellez:
@@ -296,13 +331,28 @@ class TestHEDMatchesTellez:
     """
 
     @staticmethod
-    def _draws(sigma, sigma_bias, n=4000):
-        """Recover the (alpha, beta) pairs a transform would draw."""
+    def _draws(sigma, sigma_bias, n=1500):
+        """Capture the (alpha, beta) values production actually draws.
+
+        Wraps the transform's RNG in a recorder and runs __call__, so a
+        regression to Gaussian draws or a dropped term fails these tests.
+        Re-implementing the formula here would not.
+        """
         t = HEDColorAugmentation(sigma=sigma, sigma_bias=sigma_bias, seed=0)
-        alphas, betas = [], []
+        spy = _RecordingRNG(t._rng)
+        t._rng = spy
+        img = np.full((4, 4, 3), 160, dtype=np.uint8)
         for _ in range(n):
-            alphas.append(t._rng.uniform(1.0 - sigma, 1.0 + sigma))
-            betas.append(t._rng.uniform(-sigma_bias, sigma_bias))
+            t(img)
+
+        non_uniform = [c for c in spy.calls if c[0] != "uniform"]
+        assert not non_uniform, f"production used non-uniform draws: {non_uniform[:3]}"
+
+        expected_bias = t.effective_sigma_bias
+        alphas = [v for name, lo, hi, v in spy.calls if (lo, hi) == (1.0 - sigma, 1.0 + sigma)]
+        betas = [v for name, lo, hi, v in spy.calls if (lo, hi) == (-expected_bias, expected_bias)]
+        assert len(alphas) == 3 * n, f"expected 3 alpha draws per call, got {len(alphas)}"
+        assert len(betas) == 3 * n, f"expected 3 beta draws per call, got {len(betas)}"
         return np.array(alphas), np.array(betas)
 
     def test_additive_term_is_applied(self):
@@ -340,12 +390,37 @@ class TestHEDMatchesTellez:
         assert abs(alphas.var() - expected_var) < 0.2 * expected_var
         assert abs(betas.var() - expected_var) < 0.2 * expected_var
 
-    def test_sigma_bias_defaults_to_disabled(self):
-        """beta is off by default: its scale does not transfer from the paper."""
-        img = np.full((32, 32, 3), 160, dtype=np.uint8)
-        default = HEDColorAugmentation(sigma=0.05, seed=3)(img)
-        explicit_off = HEDColorAugmentation(sigma=0.05, sigma_bias=0.0, seed=3)(img)
-        np.testing.assert_array_equal(default, explicit_off)
+    def test_default_bias_reuses_sigma(self):
+        """One sigma drives both terms, as in StainTools and HistomicsTK."""
+        assert HEDColorAugmentation(sigma=0.05).effective_sigma_bias == 0.05
+        assert HEDColorAugmentation(sigma=0.2).effective_sigma_bias == 0.2
+        # An explicit value always wins, including zero.
+        assert HEDColorAugmentation(sigma=0.05, sigma_bias=0.0).effective_sigma_bias == 0.0
+        assert HEDColorAugmentation(sigma=0.05, sigma_bias=0.01).effective_sigma_bias == 0.01
+
+    def test_perturbs_in_optical_density_units(self):
+        """sigma must be applied to OD, not to raw skimage stain output.
+
+        skimage.separate_stains returns OD / log(1e-6), so perturbing its
+        output directly would be ~14x too strong. Compare against an explicit
+        OD-space reference implementation.
+        """
+        from skimage.color import combine_stains, hed_from_rgb, rgb_from_hed, separate_stains
+
+        scale = abs(np.log(1e-6))
+        img = np.full((16, 16, 3), 160, dtype=np.uint8)
+        sigma = 0.05
+
+        rng = np.random.default_rng(0)
+        od = separate_stains(np.clip(img / 255.0, 1e-6, 1.0), hed_from_rgb) * scale
+        for ch in range(3):
+            a = rng.uniform(1 - sigma, 1 + sigma)
+            b = rng.uniform(-sigma, sigma)
+            od[:, :, ch] = od[:, :, ch] * a + b
+        expected = np.clip(combine_stains(od / scale, rgb_from_hed) * 255, 0, 255).astype(np.uint8)
+
+        got = HEDColorAugmentation(sigma=sigma, seed=0)(img)
+        np.testing.assert_array_equal(got, expected)
 
     def test_default_stays_in_plausible_stain_range(self):
         """Guards the scale trap: beta at the paper's sigma shifts hue wildly.

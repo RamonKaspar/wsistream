@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 
 from wsistream.transforms.base import PatchTransform
+
+# ``skimage.color.separate_stains`` normalises natural-log optical density by
+# ``log(1e-6)``.  Multiplying by this recovers plain OD, the units the stain
+# augmentation literature quotes its sigmas in.
+_OD_SCALE = abs(np.log(1e-6))
 
 
 @dataclass
@@ -14,60 +20,59 @@ class HEDColorAugmentation(PatchTransform):
     """
     Random perturbation of HED stain channels, following Tellez et al.
 
-    Decomposes the image into Hematoxylin, Eosin, and DAB channels, perturbs
-    each channel ``i`` independently as ``s_i' = alpha_i * s_i + beta_i``, and
-    converts back to RGB.  Both parameters are drawn per channel per image:
+    Decomposes the image into Hematoxylin, Eosin and DAB channels and perturbs
+    each channel ``i`` independently in optical-density space as
+    ``s_i' = alpha_i * s_i + beta_i``, with both parameters drawn per channel
+    per image from uniform distributions:
 
     - ``alpha_i ~ U(1 - sigma, 1 + sigma)`` scales stain concentration
     - ``beta_i ~ U(-sigma_bias, sigma_bias)`` shifts the stain baseline
 
-    Tellez et al. (2019) report intensity ratios of ``[-0.05, 0.05]`` for
-    "HED-light" and ``[-0.2, 0.2]`` for "HED-strong", which map onto
-    ``sigma=0.05`` and ``sigma=0.2`` here.
+    ``sigma`` is in the same units the papers quote, so ``sigma=0.05``
+    reproduces Tellez "HED-light" and ``sigma=0.2`` "HED-strong".
 
     Parameters
     ----------
     sigma : float
         Half-width of the multiplicative range. Default: 0.05 (Tellez "light").
-    sigma_bias : float
-        Half-width of the additive range. Default: ``0.0`` (disabled). See the
-        scale warning below before raising this.
+    sigma_bias : float or None
+        Half-width of the additive range. ``None`` (default) reuses ``sigma``,
+        matching the StainTools and HistomicsTK convention. Pass ``0.0`` to
+        disable the additive term.
     seed : int or None
         Optional seed. Overridden by ``PatchPipeline`` seeding.
 
-    Warnings
-    --------
-    ``sigma`` and ``sigma_bias`` are **not** on the same scale, and the paper's
-    sigma does not transfer to ``sigma_bias``.
+    Notes
+    -----
+    Tellez et al. (2019) report intensity ranges of ``[-0.05, 0.05]``
+    ("HED-light") and ``[-0.2, 0.2]`` ("HED-strong") but do not say whether the
+    range covers both terms.  StainTools (``sigma1``, ``sigma2``) and
+    HistomicsTK both default to one value for both, which is the convention
+    followed here.
 
-    ``alpha`` is a ratio, so it is invariant to the stain-space convention and
-    the published values port directly.  ``beta`` is an absolute offset in
-    stain space, so its meaning depends entirely on that convention.  The
-    reference implementations that use the published sigma for beta (HistomicsTK,
-    StainTools) work in SDA space scaled to roughly ``[0, 255]``.  This class
-    uses ``skimage.color.separate_stains``, whose output for typical H&E tissue
-    has channel means around ``0.02`` and maxima around ``0.25``.  A beta of
-    +/-0.05 there is several times the channel mean: it swamps the stain signal
-    and produces non-physical yellow, cyan and purple tissue rather than a
-    plausible stain shift.
+    Those published values are in optical-density units.  Because
+    :func:`skimage.color.separate_stains` returns OD divided by ``log(1e-6)``,
+    this class converts to OD before perturbing and back afterwards, so
+    ``sigma`` needs no rescaling.  Applying the published value directly to
+    unconverted skimage output would be ~14x too strong and turns tissue
+    yellow, cyan and purple.  OpenMidnight does exactly that
+    (``s_i + U(-0.05, 0.05)`` on ``skimage.rgb2hed``, no multiplicative term;
+    https://github.com/MedARC-AI/OpenMidnight, ``dinov2/data/augmentations.py``).
 
-    ``sigma_bias`` therefore defaults to ``0.0``.  If you enable it, scale it to
-    your data's stain-channel magnitude (order ``1e-3`` for skimage HED output)
-    and inspect the result visually.  For reference, OpenMidnight applies
-    ``s_i + U(-0.05, 0.05)`` to ``skimage.rgb2hed`` output with no multiplicative
-    term, which lands in this aggressive regime by design
-    (https://github.com/MedARC-AI/OpenMidnight,
-    ``dinov2/data/augmentations.py``, class ``hed_mod``).
+    :func:`skimage.color.separate_stains` clamps negative stain values to
+    zero (``np.maximum(stains, 0)``).  Tellez's equations do not.  On typical
+    TCGA H&E slides this affects roughly 4-10% of pixels per patch.  The
+    clamping happens before our perturbation, so this class is a skimage-based
+    approximation of the published formula, not an exact reproduction.
 
     See Also
     --------
-    ``albumentations.HEStain`` : Macenko/Vahadane stain augmentation, wrappable
-        via :class:`~wsistream.transforms.AlbumentationsWrapper`.  It estimates
-        the stain matrix per image instead of using the fixed HED matrix used
-        here, and applies both a multiplicative and an additive term
-        (``intensity_scale_range``, ``intensity_shift_range``) on its own
-        concentration scale.  Prefer it when you want stain augmentation matched
-        to each slide's actual stain vectors.
+    ``albumentations.HEStain`` : stain augmentation wrappable via
+        :class:`~wsistream.transforms.AlbumentationsWrapper`.  This class always
+        uses skimage's fixed HED matrix; ``HEStain`` can estimate the matrix
+        from the image with ``method="macenko"`` or ``"vahadane"``, though its
+        default ``method="random_preset"`` picks from predefined matrices
+        instead.
 
     References
     ----------
@@ -87,27 +92,36 @@ class HEDColorAugmentation(PatchTransform):
     """
 
     sigma: float = 0.05
-    sigma_bias: float = 0.0
     seed: int | None = None
+    sigma_bias: float | None = None
 
     def __post_init__(self) -> None:
-        if self.sigma < 0:
-            raise ValueError(f"sigma must be >= 0, got {self.sigma}")
-        if self.sigma_bias < 0:
-            raise ValueError(f"sigma_bias must be >= 0, got {self.sigma_bias}")
+        if not math.isfinite(self.sigma) or self.sigma < 0:
+            raise ValueError(f"sigma must be a finite number >= 0, got {self.sigma}")
+        if self.sigma_bias is not None:
+            if not math.isfinite(self.sigma_bias) or self.sigma_bias < 0:
+                raise ValueError(f"sigma_bias must be a finite number >= 0, got {self.sigma_bias}")
         self._rng = np.random.default_rng(self.seed)
+
+    @property
+    def effective_sigma_bias(self) -> float:
+        """The additive half-width actually used, in optical-density units."""
+        return self.sigma if self.sigma_bias is None else self.sigma_bias
 
     def __call__(self, image: np.ndarray) -> np.ndarray:
         from skimage.color import combine_stains, hed_from_rgb, rgb_from_hed, separate_stains
 
+        sigma_bias = self.effective_sigma_bias
+
         img_float = np.clip(image.astype(np.float64) / 255.0, 1e-6, 1.0)
 
-        hed = separate_stains(img_float, hed_from_rgb)
+        # separate_stains returns OD / _OD_SCALE; work in plain OD so that
+        # sigma means what the papers mean.
+        od = separate_stains(img_float, hed_from_rgb) * _OD_SCALE
         for ch in range(3):
             alpha = self._rng.uniform(1.0 - self.sigma, 1.0 + self.sigma)
-            hed[:, :, ch] = hed[:, :, ch] * alpha
-            if self.sigma_bias > 0:
-                hed[:, :, ch] += self._rng.uniform(-self.sigma_bias, self.sigma_bias)
+            beta = self._rng.uniform(-sigma_bias, sigma_bias)
+            od[:, :, ch] = od[:, :, ch] * alpha + beta
 
-        rgb = combine_stains(hed, rgb_from_hed)
+        rgb = combine_stains(od / _OD_SCALE, rgb_from_hed)
         return np.clip(rgb * 255, 0, 255).astype(np.uint8)

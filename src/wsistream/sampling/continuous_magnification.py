@@ -147,9 +147,12 @@ class ContinuousMagnificationSampler(PatchSampler):
     tissue_threshold : float
         Minimum tissue fraction to accept a candidate.
     max_retries : int
-        Rejection attempts per patch before giving up.
+        Tissue-location rejection attempts for each target magnification.
     seed : int or None
         Random seed.
+    max_consecutive_failures : int
+        Stop sampling a slide after this many consecutive target magnifications
+        fail because the crop is out of bounds or no tissue location is found.
 
     References
     ----------
@@ -165,6 +168,7 @@ class ContinuousMagnificationSampler(PatchSampler):
     tissue_threshold: float = 0.4
     max_retries: int = 50
     seed: int | None = None
+    max_consecutive_failures: int = 100
 
     def __post_init__(self) -> None:
         a, b = self.mpp_range
@@ -183,6 +187,10 @@ class ContinuousMagnificationSampler(PatchSampler):
             raise ValueError(f"num_patches must be -1 (infinite) or >= 1, got {self.num_patches}")
         if self.max_retries < 1:
             raise ValueError(f"max_retries must be >= 1, got {self.max_retries}")
+        if self.max_consecutive_failures < 1:
+            raise ValueError(
+                "max_consecutive_failures must be >= 1, " f"got {self.max_consecutive_failures}"
+            )
 
         self._rng = np.random.default_rng(self.seed)
 
@@ -214,6 +222,7 @@ class ContinuousMagnificationSampler(PatchSampler):
                 num_patches=self.num_patches,
                 level=0,
                 tissue_threshold=self.tissue_threshold,
+                max_retries=self.max_retries,
                 seed=int(rng.integers(0, 2**31)),
             )
             yield from inner.sample(slide, tissue_mask)
@@ -246,7 +255,7 @@ class ContinuousMagnificationSampler(PatchSampler):
 
             if max_x < 0 or max_y < 0:
                 consecutive_failures += 1
-                if consecutive_failures >= self.max_retries:
+                if consecutive_failures >= self.max_consecutive_failures:
                     break  # slide too small for this mpp range
                 continue
 
@@ -265,7 +274,7 @@ class ContinuousMagnificationSampler(PatchSampler):
                 # Different mpp → different crop size → might find tissue.
                 # Don't hard-break; count as failure and try another mpp.
                 consecutive_failures += 1
-                if consecutive_failures >= self.max_retries:
+                if consecutive_failures >= self.max_consecutive_failures:
                     break
                 continue
 

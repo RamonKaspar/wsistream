@@ -16,7 +16,7 @@ See [Online Patching](concepts/online-patching.md) for a detailed discussion.
 
 - **Two WSI backends**: OpenSlide (C-based) and TiffSlide (pure Python, cloud-compatible)
 - **Four tissue detectors**: Otsu, HSV, CLAM, and a combined detector
-- **Three samplers**: random (with rejection sampling), grid, and multi-magnification
+- **Four samplers**: random (with rejection sampling), grid, multi-magnification, and continuous-magnification (crop-and-resize)
 - **Per-tile quality filtering**: HSV pixel-based patch acceptance (Midnight-style)
 - **Augmentations**: HED stain augmentation, random flip/rotate, resize, normalize, and an albumentations wrapper
 - **Multi-view outputs**: multi-view augmentation (SimCLR/BYOL/MoCo-style), DINO-style multi-crop, and same-location magnification views

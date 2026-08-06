@@ -191,5 +191,5 @@ def random_patch_256():
 
 
 def fake_slide_paths(n: int) -> list[str]:
-    """Generate n fake slide paths for unit tests."""
-    return [f"slide_{i}.svs" for i in range(n)]
+    """Generate n virtual slide URIs for unit tests."""
+    return [f"memory://slide_{i}.svs" for i in range(n)]

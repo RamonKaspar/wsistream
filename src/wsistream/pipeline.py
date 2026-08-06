@@ -94,14 +94,14 @@ class PipelineStats:
 
     slides_processed: int = 0
     slides_failed: int = 0
-    slides_seen: set = field(default_factory=set)
+    slides_seen: set[str] = field(default_factory=set)
     patches_extracted: int = 0
     patches_filtered: int = 0
     tissue_fractions: _TissueFractionStats = field(default_factory=_TissueFractionStats)
     magnification_counts: dict[float | None, int] = field(default_factory=dict)
     cancer_type_counts: dict[str, int] = field(default_factory=dict)
     sample_type_counts: dict[str, int] = field(default_factory=dict)
-    recent_errors: deque = field(default_factory=lambda: deque(maxlen=100))
+    recent_errors: deque[tuple[str, str]] = field(default_factory=lambda: deque(maxlen=100))
     error_count: int = 0
 
     def record_error(self, slide_path: str, message: str) -> None:
@@ -109,9 +109,9 @@ class PipelineStats:
         self.recent_errors.append((slide_path, message))
         self.error_count += 1
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, int | float]:
         """Flat dict suitable for wandb.log() or similar."""
-        result = {
+        result: dict[str, int | float] = {
             "pipeline/slides_processed": self.slides_processed,
             "pipeline/slides_failed": self.slides_failed,
             "pipeline/slides_unique": len(self.slides_seen),
@@ -119,7 +119,9 @@ class PipelineStats:
             "pipeline/patches_filtered": self.patches_filtered,
         }
         if self.tissue_fractions.count > 0:
-            result["pipeline/mean_tissue_fraction"] = self.tissue_fractions.mean
+            mean_tissue_fraction = self.tissue_fractions.mean
+            assert mean_tissue_fraction is not None
+            result["pipeline/mean_tissue_fraction"] = mean_tissue_fraction
             result["pipeline/min_tissue_fraction"] = self.tissue_fractions.min_val
             result["pipeline/max_tissue_fraction"] = self.tissue_fractions.max_val
         for mpp, count in self.magnification_counts.items():
@@ -228,8 +230,9 @@ class PatchPipeline:
         ``MultiMagnificationSampler``.
     seed : int or None
         Seed for all internal RNGs: slide-queue shuffling, the sampler,
-        every transform, every crop, and fork-safe worker reseeding.
-        Set this (not seeds on individual transforms) for reproducibility.
+        every transform, and every crop.  Set this (not seeds on individual
+        transforms) for reproducibility.  ``WsiStreamDataset`` derives a
+        distinct deterministic seed for each DataLoader worker.
     views : list[ViewConfig] or None
         Optional multi-view configuration.  Mutually exclusive with
         ``transforms``.
@@ -305,9 +308,10 @@ class PatchPipeline:
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
         self._coordinate_pools: dict[str, object] = {}
-        # Mix PID into all seeds so workers (spawn or fork) diverge.
+        # PID is only used to detect a fork. An explicit seed must fully
+        # determine every RNG stream, independent of the process running it.
         self._pid_at_init: int = os.getpid()
-        base = (0 if self.seed is None else self.seed, self._pid_at_init)
+        base = self._seed_base()
         self._rng = np.random.default_rng(base)
         # Reseed sampler and transforms with pipeline-controlled seeds
         # so that externally-created RNGs don't collide across workers.
@@ -496,20 +500,19 @@ class PatchPipeline:
     def _reseed_for_worker(self) -> None:
         """Reseed all RNGs if running in a forked worker process.
 
-        For spawn-based workers, ``__post_init__`` re-runs with a new PID
-        so the RNGs already diverge.  For fork-based workers, the pipeline
-        object is copied in-memory and ``__post_init__`` does NOT re-run,
-        so all workers share the same RNG state.  This method detects the
-        fork case (PID changed since init) and reseeds once.
+        ``WsiStreamDataset`` constructs a pipeline inside each worker with a
+        distinct deterministic seed.  This method handles a pipeline object
+        inherited directly through ``fork``: unseeded copies receive fresh
+        entropy, while an explicit seed remains reproducible across processes.
         """
         pid = os.getpid()
         if pid == self._pid_at_init:
             return
 
-        # Fork detected — reseed everything and update the stored PID
-        # so subsequent iterations in this worker don't reseed again.
+        # Fork detected; update the stored PID so subsequent iterations in
+        # this process do not restart the RNG streams again.
         self._pid_at_init = pid
-        base = (0 if self.seed is None else self.seed, pid)
+        base = self._seed_base()
         self._rng = np.random.default_rng(base)
 
         if hasattr(self.sampler, "_rng"):
@@ -520,6 +523,12 @@ class PatchPipeline:
         self._reseed_views(self.views, (*base, 6))
         self._pool_rng = np.random.default_rng((*base, 4))
         self._coordinate_pools.clear()
+
+    def _seed_base(self) -> tuple[int, ...]:
+        """Return the root entropy used to derive every pipeline RNG."""
+        if self.seed is not None:
+            return (self.seed,)
+        return tuple(int(value) for value in np.random.SeedSequence().generate_state(4))
 
     @staticmethod
     def _reseed_transform(transform: PatchTransform | None, base_seed) -> None:

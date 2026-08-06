@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TypeVar
 
 import numpy as np
 
 from wsistream.types import SlideProperties
+
+_SlideT = TypeVar("_SlideT")
 
 
 class SlideBackend(ABC):
@@ -51,3 +54,18 @@ class SlideBackend(ABC):
             return float(val)
         except (ValueError, TypeError):
             return None
+
+    @classmethod
+    def _require_open_slide(cls, slide: _SlideT | None) -> _SlideT:
+        """Return the native slide object or fail with a clear lifecycle error."""
+        if slide is None:
+            raise RuntimeError(f"{cls.__name__} is not open; call open() first")
+        return slide
+
+    @staticmethod
+    def _to_rgb_array(image: object) -> np.ndarray:
+        """Convert a backend image to a numpy array and discard an alpha channel."""
+        arr = np.asarray(image)
+        if arr.ndim == 3 and arr.shape[2] == 4:
+            arr = arr[:, :, :3]
+        return arr

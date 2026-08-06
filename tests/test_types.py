@@ -1,8 +1,47 @@
 """Tests for core data types."""
 
-import numpy as np
+from pathlib import Path
 
-from wsistream.types import PatchCoordinate, TissueMask
+import numpy as np
+import pytest
+
+from wsistream.types import PatchCoordinate, TissueMask, resolve_slide_paths
+
+
+class TestResolveSlidePaths:
+    def test_single_file(self, tmp_path: Path):
+        slide = tmp_path / "slide.svs"
+        slide.touch()
+
+        assert resolve_slide_paths(slide) == [str(slide)]
+
+    def test_directory_is_expanded_recursively(self, tmp_path: Path):
+        first = tmp_path / "a.svs"
+        second = tmp_path / "nested" / "b.tiff"
+        ignored = tmp_path / "notes.txt"
+        first.touch()
+        second.parent.mkdir()
+        second.touch()
+        ignored.touch()
+
+        assert resolve_slide_paths(tmp_path) == sorted((str(first), str(second)))
+
+    def test_missing_path_raises(self, tmp_path: Path):
+        missing = tmp_path / "missing.svs"
+
+        with pytest.raises(FileNotFoundError, match="does not exist"):
+            resolve_slide_paths(missing)
+
+    def test_directory_without_slides_raises(self, tmp_path: Path):
+        (tmp_path / "notes.txt").touch()
+
+        with pytest.raises(FileNotFoundError, match="No WSI files"):
+            resolve_slide_paths(tmp_path)
+
+    def test_uri_is_preserved_for_remote_backends(self):
+        uri = "s3://bucket/path/slide.svs"
+
+        assert resolve_slide_paths(uri) == [uri]
 
 
 class TestTissueMask:

@@ -3,6 +3,7 @@
 import numpy as np
 import pytest
 
+from wsistream.pipeline import PatchPipeline
 from wsistream.transforms import (
     AlbumentationsWrapper,
     ComposeTransforms,
@@ -90,6 +91,25 @@ class TestComposeTransforms:
         assert "NormalizeTransform" in r
 
 
+class _SeededFake:
+    """Stand-in for an albumentations Compose that honours set_random_seed."""
+
+    def __init__(self):
+        self.seeds = []
+        self._rng = np.random.default_rng(0)
+
+    def set_random_seed(self, seed):
+        self.seeds.append(seed)
+        self._rng = np.random.default_rng(seed)
+
+    def __call__(self, *, image):
+        shift = int(self._rng.integers(0, 60))
+        return {"image": np.clip(image.astype(np.int16) + shift, 0, 255).astype(np.uint8)}
+
+    def __repr__(self):
+        return "SeededFake()"
+
+
 class TestAlbumentationsWrapper:
     def test_none_is_noop(self, random_patch):
         out = AlbumentationsWrapper()(random_patch)
@@ -97,6 +117,9 @@ class TestAlbumentationsWrapper:
 
     def test_applies_wrapped_transform(self, random_patch):
         class _AddOne:
+            def set_random_seed(self, seed):
+                pass
+
             def __call__(self, *, image):
                 out = np.clip(image.astype(np.int16) + 1, 0, 255).astype(np.uint8)
                 return {"image": out}
@@ -110,6 +133,9 @@ class TestAlbumentationsWrapper:
 
     def test_repr(self):
         class _Identity:
+            def set_random_seed(self, seed):
+                pass
+
             def __call__(self, *, image):
                 return {"image": image}
 
@@ -118,6 +144,89 @@ class TestAlbumentationsWrapper:
 
         wrapper = AlbumentationsWrapper(_Identity())
         assert repr(wrapper) == "AlbumentationsWrapper(Identity())"
+
+
+class TestAlbumentationsSeeding:
+    """The wrapper must carry pipeline-controlled seeds into albumentations.
+
+    Albumentations draws from the numpy global RNG, which PyTorch does not
+    reseed per DataLoader worker, so without this plumbing every forked worker
+    replays an identical augmentation sequence.
+    """
+
+    def test_seeds_wrapped_transform_once_per_reseed(self, random_patch):
+        fake = _SeededFake()
+        wrapper = AlbumentationsWrapper(fake, seed=1)
+
+        for _ in range(5):
+            wrapper(random_patch)
+        assert fake.seeds == [fake.seeds[0]], "seed pushed more than once without a reseed"
+
+        PatchPipeline._reseed_transform(wrapper, (0, 4321))
+        wrapper(random_patch)
+        assert len(fake.seeds) == 2, "pipeline reseed did not reach the wrapper"
+        assert fake.seeds[0] != fake.seeds[1]
+
+    def test_pipeline_reseed_is_reachable(self):
+        """_reseed_transform must replace the wrapper's RNG, not skip it."""
+        wrapper = AlbumentationsWrapper(_SeededFake(), seed=1)
+        before = wrapper._rng
+        PatchPipeline._reseed_transform(wrapper, (0, 99))
+        assert wrapper._rng is not before
+
+    def test_nested_in_compose_is_reached(self, random_patch):
+        fake = _SeededFake()
+        chain = ComposeTransforms([ResizeTransform(32), AlbumentationsWrapper(fake, seed=1)])
+
+        chain(random_patch)
+        first = list(fake.seeds)
+
+        PatchPipeline._reseed_transform(chain, (0, 777))
+        chain(random_patch)
+        assert len(fake.seeds) == len(first) + 1
+        assert fake.seeds[-1] != first[-1]
+
+    def test_distinct_workers_diverge(self, random_patch):
+        """Two workers (distinct pipeline seeds) must not share a sequence."""
+        outputs = []
+        for pid in (1000, 2000):
+            wrapper = AlbumentationsWrapper(_SeededFake(), seed=1)
+            PatchPipeline._reseed_transform(wrapper, (0, pid))
+            outputs.append([wrapper(random_patch).mean() for _ in range(5)])
+
+        assert outputs[0] != outputs[1], "forked workers produced identical augmentations"
+
+    def test_same_base_seed_is_reproducible(self, random_patch):
+        runs = []
+        for _ in range(2):
+            wrapper = AlbumentationsWrapper(_SeededFake(), seed=1)
+            PatchPipeline._reseed_transform(wrapper, (0, 55))
+            runs.append([wrapper(random_patch).mean() for _ in range(5)])
+
+        assert runs[0] == runs[1]
+
+    def test_warns_when_set_random_seed_missing(self, random_patch):
+        class _Legacy:
+            def __call__(self, *, image):
+                return {"image": image}
+
+        wrapper = AlbumentationsWrapper(_Legacy())
+        with pytest.warns(UserWarning, match="set_random_seed"):
+            wrapper(random_patch)
+
+    def test_real_albumentations_diverges_across_workers(self, random_patch):
+        """End-to-end check against the actual albumentations API."""
+        A = pytest.importorskip("albumentations")
+
+        outputs = []
+        for pid in (1000, 2000):
+            wrapper = AlbumentationsWrapper(
+                A.Compose([A.ColorJitter(brightness=0.5, contrast=0.5, p=1.0)])
+            )
+            PatchPipeline._reseed_transform(wrapper, (0, pid))
+            outputs.append([float(wrapper(random_patch).mean()) for _ in range(5)])
+
+        assert outputs[0] != outputs[1]
 
 
 class TestSeededRandomness:
@@ -165,8 +274,204 @@ class TestHEDColorAugmentation:
         assert out.dtype == np.uint8
 
     def test_zero_sigma_is_near_identity(self):
-        img = np.random.randint(50, 200, (64, 64, 3), dtype=np.uint8)
+        rng = np.random.default_rng(0)
+        img = rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)
+        img[0, 0] = 0
+        img[0, 1] = 255
+        img[0, 2] = [0, 128, 255]
+
         out = HEDColorAugmentation(sigma=0.0)(img)
-        # With sigma=0, perturbation is *1.0 — but the RGB->HED->RGB round
-        # trip has inherent numerical loss from the color deconvolution.
-        assert np.abs(out.astype(int) - img.astype(int)).mean() < 25
+        # The float RGB->HED->RGB round trip can truncate by one uint8 level.
+        assert np.abs(out.astype(int) - img.astype(int)).max() <= 1
+
+    def test_rejects_negative_sigma(self):
+        with pytest.raises(ValueError, match="sigma must be"):
+            HEDColorAugmentation(sigma=-0.1)
+        with pytest.raises(ValueError, match="sigma_bias must be"):
+            HEDColorAugmentation(sigma_bias=-0.1)
+
+    def test_rejects_nan_and_infinity(self):
+        for val in [float("nan"), float("inf")]:
+            with pytest.raises(ValueError, match="sigma must be"):
+                HEDColorAugmentation(sigma=val)
+            with pytest.raises(ValueError, match="sigma_bias must be"):
+                HEDColorAugmentation(sigma_bias=val)
+
+    def test_positional_arg_compatibility(self):
+        """HEDColorAugmentation(0.05, 42) must set seed=42, not sigma_bias=42."""
+        t = HEDColorAugmentation(0.05, 42)
+        assert t.sigma == 0.05
+        assert t.seed == 42
+        assert t.sigma_bias is None
+
+
+class _RecordingRNG:
+    """Wraps a Generator and records which distribution production asks for."""
+
+    def __init__(self, rng):
+        self._rng = rng
+        self.calls = []
+
+    def uniform(self, low, high, *args, **kwargs):
+        value = self._rng.uniform(low, high, *args, **kwargs)
+        self.calls.append(("uniform", low, high, value))
+        return value
+
+    def normal(self, *args, **kwargs):
+        value = self._rng.normal(*args, **kwargs)
+        self.calls.append(("normal", None, None, value))
+        return value
+
+    def __getattr__(self, name):
+        return getattr(self._rng, name)
+
+
+class TestHEDMatchesTellez:
+    """The perturbation must be s' = alpha * s + beta with both terms uniform.
+
+    Verified against Tellez et al. 2018 (arXiv:1808.05896, appendix B) and the
+    HistomicsTK reference implementation, which draws
+    alpha ~ U(1 - sigma1, 1 + sigma1) and beta ~ U(-sigma2, sigma2).
+    """
+
+    @staticmethod
+    def _draws(sigma, sigma_bias, n=1500):
+        """Capture the (alpha, beta) values production actually draws.
+
+        Wraps the transform's RNG in a recorder and runs __call__, so a
+        regression to Gaussian draws or a dropped term fails these tests.
+        Re-implementing the formula here would not.
+        """
+        t = HEDColorAugmentation(sigma=sigma, sigma_bias=sigma_bias, seed=0)
+        spy = _RecordingRNG(t._rng)
+        t._rng = spy
+        img = np.full((4, 4, 3), 160, dtype=np.uint8)
+        for _ in range(n):
+            t(img)
+
+        non_uniform = [c for c in spy.calls if c[0] != "uniform"]
+        assert not non_uniform, f"production used non-uniform draws: {non_uniform[:3]}"
+
+        expected_bias = t.effective_sigma_bias
+        alphas = [v for name, lo, hi, v in spy.calls if (lo, hi) == (1.0 - sigma, 1.0 + sigma)]
+        betas = [v for name, lo, hi, v in spy.calls if (lo, hi) == (-expected_bias, expected_bias)]
+        assert len(alphas) == 3 * n, f"expected 3 alpha draws per call, got {len(alphas)}"
+        assert len(betas) == 3 * n, f"expected 3 beta draws per call, got {len(betas)}"
+        return np.array(alphas), np.array(betas)
+
+    def test_additive_term_is_applied(self):
+        """sigma=0 must still perturb, because beta alone is non-zero."""
+        img = np.full((32, 32, 3), 160, dtype=np.uint8)
+        out = HEDColorAugmentation(sigma=0.0, sigma_bias=0.2, seed=0)(img)
+        baseline = HEDColorAugmentation(sigma=0.0, sigma_bias=0.0, seed=0)(img)
+        assert not np.array_equal(out, baseline), "additive beta term has no effect"
+
+    def test_multiplicative_term_is_applied(self):
+        """sigma_bias=0 must still perturb, because alpha alone is non-unit."""
+        img = np.full((32, 32, 3), 160, dtype=np.uint8)
+        out = HEDColorAugmentation(sigma=0.2, sigma_bias=0.0, seed=0)(img)
+        baseline = HEDColorAugmentation(sigma=0.0, sigma_bias=0.0, seed=0)(img)
+        assert not np.array_equal(out, baseline), "multiplicative alpha term has no effect"
+
+    def test_draws_are_bounded_not_gaussian(self):
+        """Uniform draws are strictly bounded; a Gaussian would have tails."""
+        sigma = 0.05
+        alphas, betas = self._draws(sigma, sigma)
+        assert alphas.min() >= 1.0 - sigma and alphas.max() <= 1.0 + sigma
+        assert betas.min() >= -sigma and betas.max() <= sigma
+        # A Gaussian(0, sigma) would put ~0.3% of mass outside +/- 3 sigma.
+        # Bounded support also means the extremes are actually reached.
+        assert alphas.max() > 1.0 + 0.9 * sigma
+        assert betas.min() < -0.9 * sigma
+
+    def test_draws_are_uniform(self):
+        """A uniform sample has mean at the centre and variance range^2/12."""
+        sigma = 0.05
+        alphas, betas = self._draws(sigma, sigma)
+        assert abs(alphas.mean() - 1.0) < 0.005
+        assert abs(betas.mean()) < 0.005
+        expected_var = (2 * sigma) ** 2 / 12
+        assert abs(alphas.var() - expected_var) < 0.2 * expected_var
+        assert abs(betas.var() - expected_var) < 0.2 * expected_var
+
+    def test_default_bias_reuses_sigma(self):
+        """One sigma drives both terms, as defined by Tellez et al. (2018)."""
+        assert HEDColorAugmentation(sigma=0.05).effective_sigma_bias == 0.05
+        assert HEDColorAugmentation(sigma=0.2).effective_sigma_bias == 0.2
+        # An explicit value always wins, including zero.
+        assert HEDColorAugmentation(sigma=0.05, sigma_bias=0.0).effective_sigma_bias == 0.0
+        assert HEDColorAugmentation(sigma=0.05, sigma_bias=0.01).effective_sigma_bias == 0.01
+
+    def test_matches_tellez_equations(self):
+        """Compare against equations 5-7 using the fixed Ruifrok HED matrix."""
+        stain_matrix = np.array(
+            [
+                [0.65, 0.70, 0.29],
+                [0.07, 0.99, 0.11],
+                [0.27, 0.57, 0.78],
+            ]
+        )
+        deconvolution_matrix = np.linalg.inv(stain_matrix)
+        epsilon = 1e-6
+        img = np.array(
+            [
+                [[0, 1, 255], [255, 0, 128], [32, 240, 17]],
+                [[160, 160, 160], [89, 133, 201], [255, 255, 255]],
+            ],
+            dtype=np.uint8,
+        )
+        sigma = 0.05
+
+        rng = np.random.default_rng(0)
+        rgb = img.astype(np.float64) / 255.0
+        concentrations = -np.log(rgb + epsilon) @ deconvolution_matrix
+        for ch in range(3):
+            alpha = rng.uniform(1 - sigma, 1 + sigma)
+            beta = rng.uniform(-sigma, sigma)
+            concentrations[:, :, ch] = concentrations[:, :, ch] * alpha + beta
+        expected = np.clip(
+            (np.exp(-(concentrations @ stain_matrix)) - epsilon) * 255,
+            0,
+            255,
+        ).astype(np.uint8)
+
+        got = HEDColorAugmentation(sigma=sigma, seed=0)(img)
+        np.testing.assert_array_equal(got, expected)
+
+    def test_no_skimage_clamping(self):
+        """Negative concentrations must survive, unlike skimage.separate_stains."""
+        from skimage.color import hed_from_rgb
+
+        conv = np.asarray(hed_from_rgb)
+        img = np.full((8, 8, 3), 240, dtype=np.uint8)
+        rgb = img.astype(np.float64) / 255.0
+        c = -np.log(rgb + 1e-6) @ conv
+        has_negative = (c < 0).any()
+        assert has_negative, "test image should produce negative concentrations"
+
+        t = HEDColorAugmentation(sigma=0.0, sigma_bias=0.0, seed=0)
+        out = t(img)
+        # With zero perturbation, a clamping-free roundtrip should lose at
+        # most 1 level (float rounding). Clamped roundtrip loses up to ~77.
+        assert np.abs(out.astype(int) - img.astype(int)).max() <= 1
+
+    def test_default_stays_in_plausible_stain_range(self):
+        """Guards the scale trap: beta at the paper's sigma shifts hue wildly.
+
+        On skimage's stain scale a beta of +/-0.05 is several times the channel
+        mean, which turns tissue yellow/cyan/purple. The default must stay in a
+        regime where the mean channel order of an H&E patch is preserved.
+        """
+        rng = np.random.default_rng(0)
+        img = np.stack(
+            [
+                rng.integers(170, 210, (48, 48), dtype=np.uint8),  # R high
+                rng.integers(90, 130, (48, 48), dtype=np.uint8),  # G low
+                rng.integers(150, 190, (48, 48), dtype=np.uint8),  # B mid
+            ],
+            axis=-1,
+        )
+        t = HEDColorAugmentation(sigma=0.05, seed=0)
+        for _ in range(25):
+            out = t(img).reshape(-1, 3).mean(0)
+            assert out[0] > out[1] and out[2] > out[1], f"channel order broken: {out}"

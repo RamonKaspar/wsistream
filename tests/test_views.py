@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import linecache
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -477,9 +479,15 @@ class TestPatchPipelineViews:
                 patches_per_slide=1,
             )
             next(iter(pipeline))
-        assert any(
-            "extends outside slide dimensions" in str(w.message) for w in caught
-        ), "Expected a UserWarning about same-center read extending outside slide dimensions"
+        matching = [
+            warning
+            for warning in caught
+            if "extends outside slide dimensions" in str(warning.message)
+        ]
+        assert len(matching) == 1
+        warning = matching[0]
+        assert Path(warning.filename).resolve() == Path(__file__).resolve()
+        assert linecache.getline(warning.filename, warning.lineno).strip() == "next(iter(pipeline))"
 
     def test_mpp_override_preserves_center_near_border(self):
         _PaddingTrackBackend.calls.clear()

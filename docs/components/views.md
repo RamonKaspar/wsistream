@@ -111,6 +111,9 @@ Beyond cropping, DINOv2 applies per-view photometric augmentations with probabil
 
 Because the blur and solarize probabilities differ, each crop type requires its own `ViewConfig`; global crops cannot share `count=2`.
 
+!!! warning "DINOv2 inverts its own blur probability"
+    The blur row is DINOv2's intent. Its [`GaussianBlur`](https://github.com/facebookresearch/dinov2/blob/main/dinov2/data/transforms.py) hands `1 - p` to `transforms.RandomApply`, which already applies with probability `p`, so blur really runs **0% / 90% / 50%**. Albumentations' `p` is not inverted, so the values below reproduce the intent; pass `1 - p` to reproduce the real behaviour.
+
 The following example adapts the DINOv2 recipe for pathology. `HEDColorAugmentation` replaces `ColorJitter` as the domain-specific stain augmentation (simulating staining variation across labs and scanners). It goes in `shared_transforms` so that all crops from the same tissue location share the same stain variation — the same physical tissue was stained once, so the stain profile is consistent across crops. `RandomFlipRotate` replaces `RandomHorizontalFlip` since tissue orientation is arbitrary in histology. All standard photometric augmentations (Gaussian blur, grayscale, solarization) are applied per-view via `AlbumentationsWrapper`.
 
 ```python
@@ -156,7 +159,7 @@ pipeline = PatchPipeline(
                 AlbumentationsWrapper(A.Compose([
                     A.ToGray(p=0.2),
                     A.GaussianBlur(blur_limit=(7, 23), sigma_limit=(0.1, 2.0), p=0.1),
-                    A.Solarize(threshold_range=(128, 128), p=0.2),
+                    A.Solarize(threshold_range=(0.5, 0.5), p=0.2),  # 128/255, normalised
                 ])),
             ]),
         ),
@@ -220,13 +223,13 @@ pipeline = PatchPipeline(
 
 ## PyTorch batches
 
-`WsiStreamDataset` returns one tensor key per view, together with the same coordinate and metadata keys used by the rest of the PyTorch integration.
+`WsiStreamDataset` returns one tensor key per view, together with the same coordinate and metadata keys used by the rest of the PyTorch integration. The keys are the view names after `count` expansion, so for the DINOv2 multi-crop pipeline above:
 
 ```python
 for batch in loader:
-    global0 = batch["global_0"]  # (B, 3, 224, 224)
-    global1 = batch["global_1"]  # (B, 3, 224, 224)
-    local0 = batch["local_0"]   # (B, 3, 96, 96)
+    global1 = batch["global1"]  # (B, 3, 224, 224), count=1 so the name is kept as-is
+    global2 = batch["global2"]  # (B, 3, 224, 224), count=1 so the name is kept as-is
+    local0 = batch["local_0"]   # (B, 3, 98, 98), count=8 expands to local_0 ... local_7
 
     x = batch["x"]
     y = batch["y"]

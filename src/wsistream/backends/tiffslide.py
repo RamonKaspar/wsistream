@@ -32,21 +32,17 @@ class TiffSlideBackend(SlideBackend):
             self._slide = None
 
     def read_region(self, x: int, y: int, level: int, width: int, height: int) -> np.ndarray:
-        region = self._slide.read_region((x, y), level, (width, height))
-        arr = np.asarray(region)
-        if arr.ndim == 3 and arr.shape[2] == 4:
-            arr = arr[:, :, :3]
-        return arr
+        slide = self._require_open_slide(self._slide)
+        region = slide.read_region((x, y), level, (width, height))
+        return self._to_rgb_array(region)
 
     def get_thumbnail(self, size: tuple[int, int]) -> np.ndarray:
-        thumb = self._slide.get_thumbnail(size)
-        arr = np.asarray(thumb)
-        if arr.ndim == 3 and arr.shape[2] == 4:
-            arr = arr[:, :, :3]
-        return arr
+        slide = self._require_open_slide(self._slide)
+        return self._to_rgb_array(slide.get_thumbnail(size))
 
     def get_properties(self) -> SlideProperties:
-        s = self._slide
+        s = self._require_open_slide(self._slide)
+        assert self._path is not None
         # TiffSlide v3+ uses "tiffslide.*" property keys, not "openslide.*".
         # Fall back to openslide keys for older versions or slides opened
         # via openslide-compatible property dicts.

@@ -61,34 +61,34 @@ class _FakeAdapter(DatasetAdapter):
 
 class TestPartitionSlidesByRank:
     def test_basic_partitioning(self):
-        slides = ["a", "b", "c", "d"]
-        assert partition_slides_by_rank(slides, rank=0, world_size=2) == ["a", "c"]
-        assert partition_slides_by_rank(slides, rank=1, world_size=2) == ["b", "d"]
+        slides = fake_slide_paths(4)
+        assert partition_slides_by_rank(slides, rank=0, world_size=2) == slides[::2]
+        assert partition_slides_by_rank(slides, rank=1, world_size=2) == slides[1::2]
 
     def test_single_rank(self):
-        slides = ["a", "b", "c"]
+        slides = fake_slide_paths(3)
         assert partition_slides_by_rank(slides, rank=0, world_size=1) == slides
 
     def test_world_size_zero_raises(self):
         with pytest.raises(ValueError, match="world_size must be >= 1"):
-            partition_slides_by_rank(["a"], rank=0, world_size=0)
+            partition_slides_by_rank(fake_slide_paths(1), rank=0, world_size=0)
 
     def test_negative_rank_raises(self):
         with pytest.raises(ValueError, match="rank must be in"):
-            partition_slides_by_rank(["a", "b"], rank=-1, world_size=2)
+            partition_slides_by_rank(fake_slide_paths(2), rank=-1, world_size=2)
 
     def test_rank_too_large_raises(self):
         with pytest.raises(ValueError, match="rank must be in"):
-            partition_slides_by_rank(["a", "b"], rank=2, world_size=2)
+            partition_slides_by_rank(fake_slide_paths(2), rank=2, world_size=2)
 
     def test_too_few_slides_raises(self):
         with pytest.raises(RuntimeError, match="got 0 slides"):
-            partition_slides_by_rank(["a"], rank=1, world_size=3)
+            partition_slides_by_rank(fake_slide_paths(1), rank=1, world_size=3)
 
     def test_auto_detection_without_env(self, monkeypatch):
         monkeypatch.delenv("RANK", raising=False)
         monkeypatch.delenv("WORLD_SIZE", raising=False)
-        slides = ["a", "b", "c"]
+        slides = fake_slide_paths(3)
         assert partition_slides_by_rank(slides) == slides
 
 

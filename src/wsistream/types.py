@@ -16,20 +16,31 @@ def resolve_slide_paths(slide_paths: str | Path | list[str | Path]) -> list[str]
 
     Accepts a directory path, a single file path, or a list of file/directory
     paths.  Directories are expanded recursively to all WSI files inside them.
+    URI strings are preserved for backends that support remote storage.
     """
     if isinstance(slide_paths, (str, Path)):
         slide_paths = [slide_paths]
 
     resolved: list[str] = []
     for entry in slide_paths:
+        # Path normalisation corrupts URI schemes (``s3://`` becomes ``s3:/``),
+        # and remote existence is the responsibility of the selected backend.
+        if isinstance(entry, str) and "://" in entry:
+            resolved.append(entry)
+            continue
+
         p = Path(entry)
         if p.is_dir():
-            found = sorted(str(f) for f in p.rglob("*") if f.suffix.lower() in WSI_EXTENSIONS)
+            found = sorted(
+                str(f) for f in p.rglob("*") if f.is_file() and f.suffix.lower() in WSI_EXTENSIONS
+            )
             if not found:
                 raise FileNotFoundError(f"No WSI files found in {p}")
             resolved.extend(found)
-        else:
+        elif p.is_file():
             resolved.append(str(p))
+        else:
+            raise FileNotFoundError(f"Slide path does not exist or is not a file: {p}")
     return resolved
 
 

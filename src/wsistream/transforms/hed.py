@@ -9,11 +9,6 @@ import numpy as np
 
 from wsistream.transforms.base import PatchTransform
 
-# ``skimage.color.separate_stains`` normalises natural-log optical density by
-# ``log(1e-6)``.  Multiplying by this recovers plain OD, the units the stain
-# augmentation literature quotes its sigmas in.
-_OD_SCALE = abs(np.log(1e-6))
-
 
 @dataclass
 class HEDColorAugmentation(PatchTransform):
@@ -35,12 +30,12 @@ class HEDColorAugmentation(PatchTransform):
     ----------
     sigma : float
         Half-width of the multiplicative range. Default: 0.05 (Tellez "light").
+    seed : int or None
+        Optional seed. Overridden by ``PatchPipeline`` seeding.
     sigma_bias : float or None
         Half-width of the additive range. ``None`` (default) reuses ``sigma``,
         matching the StainTools and HistomicsTK convention. Pass ``0.0`` to
         disable the additive term.
-    seed : int or None
-        Optional seed. Overridden by ``PatchPipeline`` seeding.
 
     Notes
     -----
@@ -50,20 +45,8 @@ class HEDColorAugmentation(PatchTransform):
     HistomicsTK both default to one value for both, which is the convention
     followed here.
 
-    Those published values are in optical-density units.  Because
-    :func:`skimage.color.separate_stains` returns OD divided by ``log(1e-6)``,
-    this class converts to OD before perturbing and back afterwards, so
-    ``sigma`` needs no rescaling.  Applying the published value directly to
-    unconverted skimage output would be ~14x too strong and turns tissue
-    yellow, cyan and purple.  OpenMidnight does exactly that
-    (``s_i + U(-0.05, 0.05)`` on ``skimage.rgb2hed``, no multiplicative term;
-    https://github.com/MedARC-AI/OpenMidnight, ``dinov2/data/augmentations.py``).
-
-    :func:`skimage.color.separate_stains` clamps negative stain values to
-    zero (``np.maximum(stains, 0)``).  Tellez's equations do not.  On typical
-    TCGA H&E slides this affects roughly 4-10% of pixels per patch.  The
-    clamping happens before our perturbation, so this class is a skimage-based
-    approximation of the published formula, not an exact reproduction.
+    Those published values are in optical-density units, and ``sigma`` is
+    applied in the same space, so it needs no rescaling.
 
     See Also
     --------
@@ -109,19 +92,19 @@ class HEDColorAugmentation(PatchTransform):
         return self.sigma if self.sigma_bias is None else self.sigma_bias
 
     def __call__(self, image: np.ndarray) -> np.ndarray:
-        from skimage.color import combine_stains, hed_from_rgb, rgb_from_hed, separate_stains
+        from skimage.color import hed_from_rgb, rgb_from_hed
 
         sigma_bias = self.effective_sigma_bias
+        conv = np.asarray(hed_from_rgb)
+        inv = np.asarray(rgb_from_hed)
 
-        img_float = np.clip(image.astype(np.float64) / 255.0, 1e-6, 1.0)
+        rgb = np.clip(image.astype(np.float64) / 255.0, 1e-6, 1.0)
+        concentrations = -np.log(rgb) @ conv
 
-        # separate_stains returns OD / _OD_SCALE; work in plain OD so that
-        # sigma means what the papers mean.
-        od = separate_stains(img_float, hed_from_rgb) * _OD_SCALE
         for ch in range(3):
             alpha = self._rng.uniform(1.0 - self.sigma, 1.0 + self.sigma)
             beta = self._rng.uniform(-sigma_bias, sigma_bias)
-            od[:, :, ch] = od[:, :, ch] * alpha + beta
+            concentrations[:, :, ch] = concentrations[:, :, ch] * alpha + beta
 
-        rgb = combine_stains(od / _OD_SCALE, rgb_from_hed)
-        return np.clip(rgb * 255, 0, 255).astype(np.uint8)
+        rgb_out = np.exp(-(concentrations @ inv))
+        return np.clip(rgb_out * 255, 0, 255).astype(np.uint8)

@@ -398,29 +398,47 @@ class TestHEDMatchesTellez:
         assert HEDColorAugmentation(sigma=0.05, sigma_bias=0.0).effective_sigma_bias == 0.0
         assert HEDColorAugmentation(sigma=0.05, sigma_bias=0.01).effective_sigma_bias == 0.01
 
-    def test_perturbs_in_optical_density_units(self):
-        """sigma must be applied to OD, not to raw skimage stain output.
+    def test_matches_manual_od_decomposition(self):
+        """The transform must decompose in plain OD without skimage's clamp.
 
-        skimage.separate_stains returns OD / log(1e-6), so perturbing its
-        output directly would be ~14x too strong. Compare against an explicit
-        OD-space reference implementation.
+        Reference: -log(rgb) @ hed_from_rgb, perturb, then exp(-(c @ rgb_from_hed)).
+        No clamping of negative concentrations, no rescaling by log(1e-6).
         """
-        from skimage.color import combine_stains, hed_from_rgb, rgb_from_hed, separate_stains
+        from skimage.color import hed_from_rgb, rgb_from_hed
 
-        scale = abs(np.log(1e-6))
+        conv = np.asarray(hed_from_rgb)
+        inv = np.asarray(rgb_from_hed)
         img = np.full((16, 16, 3), 160, dtype=np.uint8)
         sigma = 0.05
 
         rng = np.random.default_rng(0)
-        od = separate_stains(np.clip(img / 255.0, 1e-6, 1.0), hed_from_rgb) * scale
+        rgb = np.clip(img.astype(np.float64) / 255.0, 1e-6, 1.0)
+        c = -np.log(rgb) @ conv
         for ch in range(3):
             a = rng.uniform(1 - sigma, 1 + sigma)
             b = rng.uniform(-sigma, sigma)
-            od[:, :, ch] = od[:, :, ch] * a + b
-        expected = np.clip(combine_stains(od / scale, rgb_from_hed) * 255, 0, 255).astype(np.uint8)
+            c[:, :, ch] = c[:, :, ch] * a + b
+        expected = np.clip(np.exp(-(c @ inv)) * 255, 0, 255).astype(np.uint8)
 
         got = HEDColorAugmentation(sigma=sigma, seed=0)(img)
         np.testing.assert_array_equal(got, expected)
+
+    def test_no_skimage_clamping(self):
+        """Negative concentrations must survive, unlike skimage.separate_stains."""
+        from skimage.color import hed_from_rgb
+
+        conv = np.asarray(hed_from_rgb)
+        img = np.full((8, 8, 3), 240, dtype=np.uint8)
+        rgb = np.clip(img.astype(np.float64) / 255.0, 1e-6, 1.0)
+        c = -np.log(rgb) @ conv
+        has_negative = (c < 0).any()
+        assert has_negative, "test image should produce negative concentrations"
+
+        t = HEDColorAugmentation(sigma=0.0, sigma_bias=0.0, seed=0)
+        out = t(img)
+        # With zero perturbation, a clamping-free roundtrip should lose at
+        # most 1 level (float rounding). Clamped roundtrip loses up to ~77.
+        assert np.abs(out.astype(int) - img.astype(int)).max() <= 1
 
     def test_default_stays_in_plausible_stain_range(self):
         """Guards the scale trap: beta at the paper's sigma shifts hue wildly.

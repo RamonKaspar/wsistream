@@ -25,13 +25,10 @@ transform = HEDColorAugmentation(
 )
 ```
 
-One `sigma` drives both terms, matching the [StainTools](https://github.com/Peter554/StainTools/blob/master/staintools/stain_augmentor.py) and [HistomicsTK](https://digitalslidearchive.github.io/HistomicsTK/histomicstk.preprocessing.augmentation.html) convention. Set `sigma_bias` to decouple them, or to `0.0` to drop the additive term. Higher values produce more aggressive color variation.
-
-!!! note "Units"
-    The perturbation is applied in optical-density space, so `sigma` means what the papers mean and needs no rescaling. `skimage.color.separate_stains` returns OD divided by `log(1e-6)`, so applying the published `0.05` to its raw output would be about 14x too strong and shifts tissue to yellow, cyan and purple. [OpenMidnight](https://github.com/MedARC-AI/OpenMidnight) does exactly that (`dinov2/data/augmentations.py`, class `hed_mod`).
+One `sigma` drives both terms, matching the [StainTools](https://github.com/Peter554/StainTools/blob/master/staintools/stain_augmentor.py) and [HistomicsTK](https://digitalslidearchive.github.io/HistomicsTK/histomicstk.preprocessing.augmentation.html) convention. The perturbation is applied in optical-density space, so `sigma` means what the papers mean and needs no rescaling. Set `sigma_bias` to decouple the two terms, or to `0.0` to drop the additive term.
 
 !!! tip "Alternative: `albumentations.HEStain`"
-    `HEDColorAugmentation` always uses skimage's **fixed** HED deconvolution matrix, so it perturbs stain channels defined by a global average rather than by your slide's actual stain vectors. [`A.HEStain`](https://explore.albumentations.ai/transform/HEStain) can estimate the stain matrix from the image when `method="macenko"` or `method="vahadane"`; its default `method="random_preset"` instead picks from predefined matrices. It applies both a multiplicative and an additive term on its own concentration scale, so its numbers are not comparable to `sigma` here. Prefer it when stain vectors vary a lot across your cohort; see [Stain augmentation via albumentations](#stain-augmentation-via-albumentations) below.
+    `HEDColorAugmentation` always uses skimage's **fixed** HED deconvolution matrix, so it perturbs stain channels defined by a global average rather than by your slide's actual stain vectors. [`A.HEStain`](https://explore.albumentations.ai/transform/HEStain) can estimate the stain matrix from the image when `method="macenko"` or `method="vahadane"`; its default `method="random_preset"` instead picks from predefined matrices. Prefer it when stain vectors vary a lot across your cohort; see [Stain augmentation via albumentations](#stain-augmentation-via-albumentations) below.
 
 ### NormalizeTransform
 

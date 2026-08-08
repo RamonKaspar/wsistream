@@ -66,6 +66,7 @@ Key pipeline parameters:
 | `cycle` | When `True`, slides are re-queued after processing, producing an infinite stream for step-based training. |
 | `replacement` | `"with_replacement"` (default) or `"without_replacement"`. When without, each slide's grid coordinates are consumed at most once per cycle. See [Sampling](components/sampling.md#without-replacement-sampling). |
 | `seed` | Seed for all internal RNGs: slide-queue order, sampler, transforms, and crops. Set this instead of seeds on individual transforms for reproducibility. |
+| `tissue_mask_cache_size` | Maximum tissue masks retained in a per-process least-recently-used cache. Default `0` disables caching. See [Tissue-mask caching](concepts/architecture.md#tissue-mask-caching). |
 
 See [Architecture](concepts/architecture.md) for a full explanation of the pipeline flow.
 

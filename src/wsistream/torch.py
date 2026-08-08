@@ -266,6 +266,9 @@ class WsiStreamDataset(IterableDataset):
     shared_transforms : PatchTransform or None
         Optional transform chain applied once to the primary extracted patch
         before per-view crop and transform processing.  Requires ``views``.
+    tissue_mask_cache_size : int
+        Maximum tissue masks cached per worker and iterator. Uses
+        least-recently-used eviction. ``0`` (default) disables caching.
     """
 
     def __init__(
@@ -286,11 +289,14 @@ class WsiStreamDataset(IterableDataset):
         seed: int | None = None,
         views: list[ViewConfig] | None = None,
         shared_transforms: PatchTransform | None = None,
+        tissue_mask_cache_size: int = 0,
     ):
         if views is not None and transforms is not None:
             raise ValueError("transforms and views are mutually exclusive")
         if views is None and shared_transforms is not None:
             raise ValueError("shared_transforms requires views")
+        if tissue_mask_cache_size < 0:
+            raise ValueError(f"tissue_mask_cache_size must be >= 0, got {tissue_mask_cache_size}")
         self._slide_paths = resolve_slide_paths(slide_paths)
         self._backend = backend
         self._tissue_detector = tissue_detector
@@ -307,6 +313,7 @@ class WsiStreamDataset(IterableDataset):
         self._cycle = cycle
         self._replacement = replacement
         self._seed = seed
+        self._tissue_mask_cache_size = tissue_mask_cache_size
         self._iter_count = 0
         self._shared_stats = _StatsAggregator()
 
@@ -369,6 +376,7 @@ class WsiStreamDataset(IterableDataset):
             cycle=self._cycle,
             replacement=self._replacement,
             seed=worker_seed,
+            tissue_mask_cache_size=self._tissue_mask_cache_size,
         )
 
         flush_interval = 16 if worker_info is not None else 1

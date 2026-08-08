@@ -12,7 +12,7 @@ from __future__ import annotations
 import copy
 import logging
 import os
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
@@ -137,6 +137,95 @@ class PipelineStats:
         return result
 
 
+_TissueMaskCacheKey = tuple[str, tuple[int, int]]
+
+
+class _TissueMaskCache:
+    """Process-local LRU cache for tissue masks."""
+
+    def __init__(self, capacity: int) -> None:
+        self._capacity = capacity
+        self._entries: OrderedDict[_TissueMaskCacheKey, TissueMask] = OrderedDict()
+        self._backend: SlideBackend | None = None
+        self._detector: TissueDetector | None = None
+        self._thumbnail_size: tuple[int, int] | None = None
+        self._pid = os.getpid()
+
+    def configure(
+        self,
+        capacity: int,
+        backend: SlideBackend,
+        detector: TissueDetector,
+        thumbnail_size: tuple[int, int],
+    ) -> None:
+        """Update cache configuration and invalidate incompatible entries."""
+        if capacity < 0:
+            raise ValueError(f"tissue_mask_cache_size must be >= 0, got {capacity}")
+        self._ensure_process()
+        if (
+            backend is not self._backend
+            or detector is not self._detector
+            or thumbnail_size != self._thumbnail_size
+        ):
+            self._entries.clear()
+        self._backend = backend
+        self._detector = detector
+        self._thumbnail_size = thumbnail_size
+        self._capacity = capacity
+        while len(self._entries) > capacity:
+            self._entries.popitem(last=False)
+
+    def get(self, key: _TissueMaskCacheKey) -> TissueMask | None:
+        """Return an isolated copy of a cached mask and refresh its LRU position."""
+        self._ensure_process()
+        if self._capacity == 0 or key not in self._entries:
+            return None
+        tissue_mask = self._entries.pop(key)
+        self._entries[key] = tissue_mask
+        return self._copy(tissue_mask)
+
+    def put(self, key: _TissueMaskCacheKey, tissue_mask: TissueMask) -> None:
+        """Store an isolated mask copy and evict the least-recently-used entry."""
+        self._ensure_process()
+        if self._capacity == 0:
+            return
+        self._entries[key] = self._copy(tissue_mask)
+        self._entries.move_to_end(key)
+        while len(self._entries) > self._capacity:
+            self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        """Remove all entries from this process's cache."""
+        self._ensure_process()
+        self._entries.clear()
+
+    def __len__(self) -> int:
+        self._ensure_process()
+        return len(self._entries)
+
+    def __getstate__(self) -> dict[str, object]:
+        """Exclude cached arrays when serializing work to another process."""
+        state = self.__dict__.copy()
+        state["_entries"] = OrderedDict()
+        state["_backend"] = None
+        state["_detector"] = None
+        return state
+
+    def _ensure_process(self) -> None:
+        pid = os.getpid()
+        if pid != self._pid:
+            self._entries.clear()
+            self._pid = pid
+
+    @staticmethod
+    def _copy(tissue_mask: TissueMask) -> TissueMask:
+        return TissueMask(
+            mask=tissue_mask.mask.copy(),
+            downsample=tissue_mask.downsample,
+            slide_dimensions=tissue_mask.slide_dimensions,
+        )
+
+
 class _PoolEntry:
     """One active slide in the pool (internal)."""
 
@@ -239,6 +328,10 @@ class PatchPipeline:
     shared_transforms : PatchTransform or None
         Optional transform chain applied once to the primary extracted
         patch before per-view crop/transform processing.
+    tissue_mask_cache_size : int
+        Maximum number of tissue masks cached by this pipeline instance in
+        its current process. Uses least-recently-used eviction. ``0``
+        (default) disables caching.
     """
 
     slide_paths: str | Path | list[str | Path] = field(default_factory=list)
@@ -258,6 +351,7 @@ class PatchPipeline:
     seed: int | None = None
     views: list[ViewConfig] | None = None
     shared_transforms: PatchTransform | None = None
+    tissue_mask_cache_size: int = 0
 
     def __post_init__(self) -> None:
         if self.slide_sampling not in ("sequential", "random"):
@@ -270,6 +364,10 @@ class PatchPipeline:
             raise ValueError(f"patches_per_slide must be >= 1, got {self.patches_per_slide}")
         if self.patches_per_visit < 1:
             raise ValueError(f"patches_per_visit must be >= 1, got {self.patches_per_visit}")
+        if self.tissue_mask_cache_size < 0:
+            raise ValueError(
+                f"tissue_mask_cache_size must be >= 0, got {self.tissue_mask_cache_size}"
+            )
         if self.replacement not in ("with_replacement", "without_replacement"):
             raise ValueError(
                 f"replacement must be 'with_replacement' or 'without_replacement', "
@@ -308,6 +406,7 @@ class PatchPipeline:
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
         self._coordinate_pools: dict[str, object] = {}
+        self._tissue_mask_cache = _TissueMaskCache(self.tissue_mask_cache_size)
         # PID is only used to detect a fork. An explicit seed must fully
         # determine every RNG stream, independent of the process running it.
         self._pid_at_init: int = os.getpid()
@@ -340,9 +439,17 @@ class PatchPipeline:
         self._stats = PipelineStats()
         self._failed_slides.clear()
 
+    def clear_tissue_mask_cache(self) -> None:
+        """Clear cached tissue masks without changing pipeline statistics."""
+        self._tissue_mask_cache.clear()
+
     # ── core iteration ──
 
     def _iterate(self) -> Iterator[PatchResult]:
+        if self.tissue_mask_cache_size < 0:
+            raise ValueError(
+                f"tissue_mask_cache_size must be >= 0, got {self.tissue_mask_cache_size}"
+            )
         self._reseed_for_worker()
         slide_queue: deque[str] = deque(self._get_slide_order())
         pool: list[_PoolEntry] = []
@@ -685,18 +792,7 @@ class PatchPipeline:
         # Everything after open() must be wrapped so that a failure
         # closes the slide — including stats update and PoolEntry creation.
         try:
-            thumbnail = slide.get_thumbnail(self.thumbnail_size)
-            th, tw = thumbnail.shape[:2]
-            sw, sh = slide.properties.dimensions
-            downsample_xy = (sw / tw, sh / th)
-            downsample_scalar = max(downsample_xy)
-
-            mask_arr = self.tissue_detector.detect(thumbnail, downsample=downsample_xy)
-            tissue_mask = TissueMask(
-                mask=mask_arr,
-                downsample=downsample_scalar,
-                slide_dimensions=slide.properties.dimensions,
-            )
+            tissue_mask = self._load_tissue_mask(slide_path, slide)
 
             if self.replacement == "without_replacement":
                 pool = self._coordinate_pools.get(slide_path)
@@ -732,6 +828,32 @@ class PatchPipeline:
         except Exception:
             slide.close()
             raise
+
+    def _load_tissue_mask(self, slide_path: str, slide: SlideHandle) -> TissueMask:
+        """Load a cached tissue mask or detect and cache a new one."""
+        self._tissue_mask_cache.configure(
+            capacity=self.tissue_mask_cache_size,
+            backend=self.backend,
+            detector=self.tissue_detector,
+            thumbnail_size=self.thumbnail_size,
+        )
+        cache_key = (slide_path, slide.properties.dimensions)
+        tissue_mask = self._tissue_mask_cache.get(cache_key)
+        if tissue_mask is not None:
+            return tissue_mask
+
+        thumbnail = slide.get_thumbnail(self.thumbnail_size)
+        th, tw = thumbnail.shape[:2]
+        sw, sh = slide.properties.dimensions
+        downsample_xy = (sw / tw, sh / th)
+        mask_arr = self.tissue_detector.detect(thumbnail, downsample=downsample_xy)
+        tissue_mask = TissueMask(
+            mask=mask_arr,
+            downsample=max(downsample_xy),
+            slide_dimensions=slide.properties.dimensions,
+        )
+        self._tissue_mask_cache.put(cache_key, tissue_mask)
+        return tissue_mask
 
     def _close_entry(self, entry: _PoolEntry) -> None:
         try:

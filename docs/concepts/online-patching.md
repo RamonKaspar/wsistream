@@ -29,7 +29,7 @@ No patches are saved to disk. Because coordinates are sampled stochastically, th
 - **Pool-based slide interleaving**: rather than processing one slide at a time, the pipeline keeps multiple slides open simultaneously and round-robins across them. This ensures patches from different slides are interleaved in the output stream.
 - **Per-slide budgets**: each slide has a `patches_per_slide` limit. Once reached, the slide is closed and replaced by the next one from the queue. This is essential when using infinite samplers (`num_patches=-1`).
 - **Cycle mode**: when `cycle=True`, slides are re-queued after all have been processed, producing an infinite stream suitable for step-based training.
-- **Two-stage tissue filtering**: a coarse `TissueDetector` runs once per slide on a thumbnail, followed by a fine-grained `PatchFilter` that checks every extracted patch at the sampled resolution.
+- **Two-stage tissue filtering**: a coarse `TissueDetector` runs when a slide is opened (unless its mask is cached), followed by a fine-grained `PatchFilter` that checks every extracted patch at the sampled resolution.
 
 See [Architecture](architecture.md) for a full breakdown of the pipeline flow.
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import Counter
 
+import numpy as np
 import pytest
 
 from wsistream.datasets import TCGAAdapter
@@ -26,6 +27,22 @@ from wsistream.transforms import (
 )
 
 pytestmark = pytest.mark.e2e
+
+
+class _CountingOtsuDetector(OtsuTissueDetector):
+    """Run Otsu detection while tracking calls."""
+
+    call_count: int
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.call_count = 0
+
+    def detect(
+        self, thumbnail: np.ndarray, downsample: tuple[float, float] = (1.0, 1.0)
+    ) -> np.ndarray:
+        self.call_count += 1
+        return super().detect(thumbnail, downsample)
 
 
 class TestSlideInterleaving:
@@ -151,6 +168,32 @@ class TestCycleMode:
         assert (
             max_visits > patches_per_slide
         ), f"No slide was revisited (max patches from one slide: {max_visits})"
+
+
+class TestTissueMaskCache:
+    """Cached masks must survive real slide reopenings."""
+
+    def test_reuses_mask_after_slide_reopening(self, slides, make_backend):
+        detector = _CountingOtsuDetector()
+        pipeline = PatchPipeline(
+            slide_paths=[slides[0]],
+            backend=make_backend(),
+            tissue_detector=detector,
+            sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
+            pool_size=1,
+            patches_per_slide=1,
+            cycle=True,
+            tissue_mask_cache_size=1,
+        )
+
+        iterator = iter(pipeline)
+        try:
+            next(iterator)
+            next(iterator)
+        finally:
+            iterator.close()
+
+        assert detector.call_count == 1
 
 
 class TestFullMidnightPipeline:

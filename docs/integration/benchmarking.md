@@ -30,6 +30,7 @@ def make_dataset(slide_paths, pool_size, patches_per_slide, patches_per_visit, s
         patches_per_visit=patches_per_visit,
         cycle=True,  # benchmark measures steady-state; finite iteration would stop early
         seed=seed,
+        output_dtype="uint8",  # transfer uint8 image tensors from workers
     )
 
 

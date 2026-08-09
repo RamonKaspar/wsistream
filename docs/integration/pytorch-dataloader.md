@@ -59,6 +59,24 @@ Coordinate and metadata fields follow the same schema. See [Views](../components
 !!! note "Tissue-mask cache memory"
     `tissue_mask_cache_size` is a per-worker, per-iterator entry limit rather than a shared global limit. A boolean mask at the default 2048 x 2048 thumbnail size occupies approximately 4 MiB; multiply the configured capacity by the number of active workers when estimating peak memory. Caching is disabled by default because it also changes the behavior of stateful or stochastic tissue detectors. See [Tissue-mask caching](../concepts/architecture.md#tissue-mask-caching) for invalidation details.
 
+## Reducing worker IPC with uint8 tensors
+
+The default `output_dtype="float32"` converts uint8 images to float32 tensors in `[0, 1]` before yielding them. With `num_workers>0`, that conversion occurs in the workers, so the worker-to-main-process image payload uses four bytes per value instead of one. Set `output_dtype="uint8"` to keep both worker IPC and host-to-device image payloads at one byte per value:
+
+```python
+dataset = WsiStreamDataset(
+    ...,
+    output_dtype="uint8",
+)
+
+loader = DataLoader(dataset, batch_size=64, num_workers=4, pin_memory=True)
+
+for batch in loader:
+    images = batch["image"].to(device, non_blocking=True).float().div_(255.0)
+```
+
+The order matters: move the uint8 tensor to the device before calling `.float()`, otherwise it expands to float32 in the main process and forfeits the smaller host-to-device transfer. The option also applies to every named view in a multi-view dataset. `output_dtype="uint8"` requires every emitted image to remain uint8; `NormalizeTransform` or another dtype-changing transform causes a `ValueError` during iteration. Move normalization into the training step after device transfer when using this mode.
+
 ## Why IterableDataset, not Dataset?
 
 A map-style [`Dataset`](https://pytorch.org/docs/stable/data.html#map-style-datasets) requires `__len__` and `__getitem__`. Online patching is inherently stochastic -- there is no fixed set of patches to index. [`IterableDataset`](https://pytorch.org/docs/stable/data.html#iterable-style-datasets) streams lazily, which is what online patching needs. See the [PyTorch data loading docs](https://pytorch.org/docs/stable/data.html) for background on the two dataset styles.

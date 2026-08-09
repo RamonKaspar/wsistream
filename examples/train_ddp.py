@@ -103,6 +103,7 @@ def main():
         pool_size=args.pool_size,
         patches_per_slide=args.patches_per_slide,
         seed=args.seed + rank,
+        output_dtype="uint8",
     )
 
     loader = DataLoader(
@@ -123,7 +124,7 @@ def main():
     mon_iter = iter(mon)
     for step in range(args.steps):
         batch = next(mon_iter)
-        images = batch["image"].to(device, non_blocking=True)
+        images = batch["image"].to(device, non_blocking=True).float().div_(255.0)
         logits = model(images)
         loss = logits.mean()  # placeholder — replace with your actual loss
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Literal
 
 import cv2
 import numpy as np
@@ -269,6 +269,12 @@ class WsiStreamDataset(IterableDataset):
     tissue_mask_cache_size : int
         Maximum tissue masks cached per worker and iterator. Uses
         least-recently-used eviction. ``0`` (default) disables caching.
+    output_dtype : {"float32", "uint8"}
+        Tensor dtype for images and views. ``"float32"`` (default) converts
+        uint8 arrays to float32 and scales them to ``[0, 1]``. ``"uint8"``
+        preserves uint8 values so workers transfer one quarter as many image
+        bytes; conversion and normalization must then happen after device
+        transfer.
     """
 
     def __init__(
@@ -290,6 +296,7 @@ class WsiStreamDataset(IterableDataset):
         views: list[ViewConfig] | None = None,
         shared_transforms: PatchTransform | None = None,
         tissue_mask_cache_size: int = 0,
+        output_dtype: Literal["float32", "uint8"] = "float32",
     ):
         if views is not None and transforms is not None:
             raise ValueError("transforms and views are mutually exclusive")
@@ -297,6 +304,8 @@ class WsiStreamDataset(IterableDataset):
             raise ValueError("shared_transforms requires views")
         if tissue_mask_cache_size < 0:
             raise ValueError(f"tissue_mask_cache_size must be >= 0, got {tissue_mask_cache_size}")
+        if output_dtype not in ("float32", "uint8"):
+            raise ValueError(f"output_dtype must be 'float32' or 'uint8', got {output_dtype!r}")
         self._slide_paths = resolve_slide_paths(slide_paths)
         self._backend = backend
         self._tissue_detector = tissue_detector
@@ -314,6 +323,7 @@ class WsiStreamDataset(IterableDataset):
         self._replacement = replacement
         self._seed = seed
         self._tissue_mask_cache_size = tissue_mask_cache_size
+        self._output_dtype = output_dtype
         self._iter_count = 0
         self._shared_stats = _StatsAggregator()
 
@@ -517,8 +527,7 @@ class WsiStreamDataset(IterableDataset):
 
         return list(cur), cur_slides_total, prev_slides_seen, prev_mpp, prev_cancer, prev_sample
 
-    @staticmethod
-    def _result_to_dict(result: PatchResult) -> dict:
+    def _result_to_dict(self, result: PatchResult) -> dict:
         """Convert a PatchResult to a dict of collate-safe types."""
         coord = result.coordinate
 
@@ -537,22 +546,32 @@ class WsiStreamDataset(IterableDataset):
         }
         if result.views is not None:
             for name, view in result.views.items():
-                item[name] = WsiStreamDataset._image_to_tensor(view)
+                item[name] = self._image_to_tensor(view)
             # Coordinate fields overwrite; these are authoritative.
             item.update(coord_fields)
         else:
-            item.update({"image": WsiStreamDataset._image_to_tensor(result.image), **coord_fields})
+            item.update({"image": self._image_to_tensor(result.image), **coord_fields})
         return item
 
-    @staticmethod
-    def _image_to_tensor(image: np.ndarray | None) -> torch.Tensor:
-        """Convert HWC numpy image to CHW float tensor."""
+    def _image_to_tensor(self, image: np.ndarray | None) -> torch.Tensor:
+        """Convert an HWC numpy image to the configured CHW tensor dtype."""
         if image is None:
             raise ValueError("image array is None")
+        if self._output_dtype == "uint8" and image.dtype != np.uint8:
+            raise ValueError(
+                "output_dtype='uint8' requires every pipeline image to have dtype uint8, "
+                f"got dtype {image.dtype}. Remove NormalizeTransform or other dtype-changing "
+                "transforms and convert or normalize the batch after device transfer."
+            )
         image = np.ascontiguousarray(image)
+        if not image.flags.writeable:
+            image = image.copy()
+        tensor = torch.from_numpy(image).permute(2, 0, 1)
+        if self._output_dtype == "uint8":
+            return tensor.contiguous()
         if image.dtype == np.uint8:
-            return torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
-        return torch.from_numpy(image).permute(2, 0, 1).float()
+            return tensor.float() / 255.0
+        return tensor.float()
 
 
 # Re-export for convenience: `from wsistream.torch import MonitoredLoader`

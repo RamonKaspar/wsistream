@@ -332,6 +332,42 @@ class TestEdgeCases:
         assert seen == set(paths)
 
 
+@pytest.mark.e2e
+class TestRealWsiUint8Output:
+    def test_uint8_batch_preserves_real_slide_pixels(self, slides, make_backend):
+        float_dataset = WsiStreamDataset(
+            slide_paths=[slides[0]],
+            backend=make_backend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=256, num_patches=1, seed=42),
+            pool_size=1,
+            patches_per_slide=1,
+            cycle=False,
+            seed=42,
+        )
+        uint8_dataset = WsiStreamDataset(
+            slide_paths=[slides[0]],
+            backend=make_backend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=256, num_patches=1, seed=42),
+            pool_size=1,
+            patches_per_slide=1,
+            cycle=False,
+            seed=42,
+            output_dtype="uint8",
+        )
+
+        float_batches = list(DataLoader(float_dataset, batch_size=1, num_workers=0))
+        uint8_batches = list(DataLoader(uint8_dataset, batch_size=1, num_workers=0))
+        float_batch = float_batches[0]["image"]
+        uint8_batch = uint8_batches[0]["image"]
+
+        assert len(float_batches) == 1
+        assert len(uint8_batches) == 1
+        assert uint8_batch.dtype == torch.uint8
+        torch.testing.assert_close(uint8_batch.float() / 255.0, float_batch)
+
+
 # ── helpers for DDP tests ──
 
 
@@ -398,6 +434,7 @@ def _run_rank(
             cycle=False,
             slide_sampling="sequential",
             seed=100,
+            output_dtype="uint8",
         )
         loader = DataLoader(
             dataset,
@@ -434,7 +471,9 @@ def _run_rank(
                 ]
             )
 
-            logits = model(batch["image"])
+            assert batch["image"].dtype == torch.uint8
+            images = batch["image"].float().div_(255.0)
+            logits = model(images)
             loss = logits.square().mean()
 
             optimizer.zero_grad()

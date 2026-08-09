@@ -630,6 +630,37 @@ class TestWsiStreamDatasetViews:
         assert batch["global"].dtype == torch.float32
         assert "x" in batch and "slide_path" in batch
 
+    def test_uint8_output_applies_to_every_named_view(self):
+        dataset = WsiStreamDataset(
+            slide_paths=fake_slide_paths(1),
+            backend=FakeBackend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=128, num_patches=1, seed=42),
+            views=[
+                ViewConfig(
+                    name="global",
+                    transforms=ComposeTransforms([ResizeTransform(64)]),
+                ),
+                ViewConfig(
+                    name="local",
+                    crop=RandomResizedCrop(size=32, scale=(0.2, 0.5), seed=1),
+                ),
+            ],
+            pool_size=1,
+            patches_per_slide=1,
+            cycle=False,
+            output_dtype="uint8",
+        )
+
+        items = list(dataset)
+        item = items[0]
+
+        assert len(items) == 1
+        assert item["global"].dtype == torch.uint8
+        assert item["local"].dtype == torch.uint8
+        assert item["global"].is_contiguous()
+        assert item["local"].is_contiguous()
+
     def test_views_and_transforms_mutually_exclusive_at_construction(self):
         with pytest.raises(ValueError, match="mutually exclusive"):
             WsiStreamDataset(

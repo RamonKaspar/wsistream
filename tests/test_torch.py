@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import warnings
 
 import cv2
 import numpy as np
@@ -16,6 +17,8 @@ from wsistream.filters.base import PatchFilter
 from wsistream.sampling.random import RandomSampler
 from wsistream.tissue.otsu import OtsuTissueDetector
 from wsistream.torch import WsiStreamDataset, partition_slides_by_rank
+from wsistream.transforms import NormalizeTransform
+from wsistream.transforms.base import PatchTransform
 from wsistream.types import SlideMetadata
 
 
@@ -39,6 +42,13 @@ def _make_dataset(n_slides=3, patches_per_slide=5, **kwargs) -> WsiStreamDataset
 class _RejectAll(PatchFilter):
     def accept(self, patch: np.ndarray) -> bool:
         return False
+
+
+class _ReadOnlyTransform(PatchTransform):
+    def __call__(self, image: np.ndarray) -> np.ndarray:
+        result = image.copy()
+        result.flags.writeable = False
+        return result
 
 
 class _FailBackend(FakeBackend):
@@ -111,6 +121,76 @@ class TestWsiStreamDatasetIteration:
             assert item["image"].dtype == torch.float32
             assert item["image"].min() >= 0.0
             assert item["image"].max() <= 1.0
+
+    def test_uint8_output_preserves_pixels_and_reduces_tensor_bytes(self):
+        float_items = list(_make_dataset(n_slides=1, patches_per_slide=1))
+        uint8_items = list(
+            _make_dataset(
+                n_slides=1,
+                patches_per_slide=1,
+                output_dtype="uint8",
+            )
+        )
+        float_image = float_items[0]["image"]
+        uint8_image = uint8_items[0]["image"]
+
+        assert len(float_items) == 1
+        assert len(uint8_items) == 1
+        assert uint8_image.dtype == torch.uint8
+        assert uint8_image.is_contiguous()
+        uint8_bytes = uint8_image.numel() * uint8_image.element_size()
+        float_bytes = float_image.numel() * float_image.element_size()
+        assert uint8_bytes * 4 == float_bytes
+        torch.testing.assert_close(uint8_image.float() / 255.0, float_image)
+
+    def test_uint8_output_rejects_float_transform_results(self):
+        dataset = _make_dataset(
+            n_slides=1,
+            patches_per_slide=1,
+            transforms=NormalizeTransform(
+                mean=(0.485, 0.456, 0.406),
+                std=(0.229, 0.224, 0.225),
+            ),
+            output_dtype="uint8",
+        )
+
+        with pytest.raises(ValueError, match="output_dtype='uint8'.*dtype float32"):
+            next(iter(dataset))
+
+    def test_float32_output_does_not_rescale_normalized_results(self):
+        mean = (0.485, 0.456, 0.406)
+        std = (0.229, 0.224, 0.225)
+        dataset = _make_dataset(
+            n_slides=1,
+            patches_per_slide=1,
+            transforms=NormalizeTransform(mean=mean, std=std),
+        )
+
+        items = list(dataset)
+        image = items[0]["image"]
+        expected = torch.tensor([(128 / 255.0 - m) / s for m, s in zip(mean, std)])
+
+        assert len(items) == 1
+        assert image.dtype == torch.float32
+        torch.testing.assert_close(image[:, 0, 0], expected)
+
+    def test_uint8_output_copies_non_writable_arrays(self):
+        dataset = _make_dataset(
+            n_slides=1,
+            patches_per_slide=1,
+            transforms=_ReadOnlyTransform(),
+            output_dtype="uint8",
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            items = list(dataset)
+
+        assert len(items) == 1
+        image = items[0]["image"]
+        image[0, 0, 0] = 0
+        assert image.dtype == torch.uint8
+        assert image[0, 0, 0] == 0
 
     def test_coordinate_fields_present(self):
         dataset = _make_dataset(n_slides=1, patches_per_slide=2)
@@ -288,6 +368,10 @@ class TestSeedDiversity:
 
 
 class TestParameterValidation:
+    def test_invalid_output_dtype_raises(self):
+        with pytest.raises(ValueError, match="output_dtype must be 'float32' or 'uint8'"):
+            _make_dataset(output_dtype="float16")
+
     def test_negative_tissue_mask_cache_size_raises(self):
         with pytest.raises(ValueError, match="tissue_mask_cache_size must be >= 0"):
             _make_dataset(tissue_mask_cache_size=-1)
@@ -326,6 +410,21 @@ class TestParameterValidation:
 
 
 class TestMultiWorker:
+    def test_uint8_output_crosses_worker_boundary_without_conversion(self):
+        dataset = _make_dataset(
+            n_slides=4,
+            patches_per_slide=2,
+            output_dtype="uint8",
+        )
+        loader = DataLoader(dataset, batch_size=4, num_workers=2)
+
+        batches = list(loader)
+        batch = batches[0]
+
+        assert len(batches) == 2
+        assert batch["image"].dtype == torch.uint8
+        assert batch["image"].shape == (4, 3, 256, 256)
+
     def test_multi_worker_produces_patches(self):
         dataset = _make_dataset(n_slides=4, patches_per_slide=3)
         loader = DataLoader(dataset, batch_size=2, num_workers=2)

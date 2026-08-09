@@ -61,6 +61,7 @@ def main():
         pool_size=8,
         patches_per_slide=100,
         seed=42 + rank,
+        output_dtype="uint8",
     )
 
     loader = DataLoader(dataset, batch_size=64, num_workers=4, pin_memory=True)
@@ -72,7 +73,7 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
     for step, batch in enumerate(mon):
-        images = batch["image"].to(device, non_blocking=True)
+        images = batch["image"].to(device, non_blocking=True).float().div_(255.0)
         loss = model(images).mean()  # placeholder — replace with your actual loss
 
         optimizer.zero_grad()

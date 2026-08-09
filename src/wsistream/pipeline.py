@@ -402,7 +402,20 @@ class PatchPipeline:
                     f"replacement='without_replacement'. "
                     f"Use RandomSampler or MultiMagnificationSampler."
                 )
-        self.slide_paths = resolve_slide_paths(self.slide_paths)
+        resolved_paths = resolve_slide_paths(self.slide_paths)
+        if self.replacement == "without_replacement":
+            seen: set[str] = set()
+            duplicates: set[str] = set()
+            for path in resolved_paths:
+                if path in seen:
+                    duplicates.add(path)
+                seen.add(path)
+            if duplicates:
+                raise ValueError(
+                    "replacement='without_replacement' requires unique slide paths; "
+                    f"duplicate paths: {sorted(duplicates)}"
+                )
+        self.slide_paths = resolved_paths
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
         self._coordinate_pools: dict[str, object] = {}
@@ -796,7 +809,7 @@ class PatchPipeline:
 
             if self.replacement == "without_replacement":
                 pool = self._coordinate_pools.get(slide_path)
-                if pool is None or pool.exhausted:
+                if pool is None or (pool.exhausted and self.cycle):
                     pool = self.sampler.build_coordinate_pool(slide, tissue_mask, self._pool_rng)
                     self._coordinate_pools[slide_path] = pool
                 sampler_iter = _pool_to_iterator(pool, self._pool_rng)

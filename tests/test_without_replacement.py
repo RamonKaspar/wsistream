@@ -344,6 +344,14 @@ class TestPipelineWithoutReplacement:
                 replacement="without_replacement",
             )
 
+    def test_duplicate_slide_paths_raise(self):
+        path = fake_slide_paths(1)[0]
+        with pytest.raises(ValueError, match="requires unique slide paths"):
+            _make_pipeline(
+                slide_paths=[path, path],
+                replacement="without_replacement",
+            )
+
     def test_produces_patches(self):
         pipeline = _make_pipeline(
             n_slides=2,
@@ -421,6 +429,26 @@ class TestPipelineWithoutReplacement:
         # Should stop at pool size, not at patches_per_slide
         assert len(patches) <= 256
         assert len(patches) > 0
+
+    def test_exhausted_pool_is_not_rebuilt_without_cycle(self):
+        path = fake_slide_paths(1)[0]
+        pipeline = _make_pipeline(
+            n_slides=1,
+            cycle=False,
+            replacement="without_replacement",
+        )
+
+        first_entry = pipeline._open_slide(path)
+        list(first_entry.sampler_iter)
+        first_entry.slide.close()
+        exhausted_pool = pipeline._coordinate_pools[path]
+
+        second_entry = pipeline._open_slide(path)
+        try:
+            assert pipeline._coordinate_pools[path] is exhausted_pool
+            assert list(second_entry.sampler_iter) == []
+        finally:
+            second_entry.slide.close()
 
     def test_patches_per_slide_still_respected(self):
         pipeline = _make_pipeline(

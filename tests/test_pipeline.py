@@ -6,6 +6,7 @@ import copy
 import dataclasses
 import multiprocessing as mp
 import os
+import pickle
 from collections import Counter
 
 import numpy as np
@@ -16,7 +17,9 @@ from torch.utils.data import DataLoader, IterableDataset
 from tests.conftest import FakeBackend, fake_slide_paths
 from wsistream.filters.base import PatchFilter
 from wsistream.pipeline import PatchPipeline, PipelineStats
+from wsistream.sampling.base import PatchSampler
 from wsistream.sampling.random import RandomSampler
+from wsistream.tissue.base import TissueDetector
 from wsistream.tissue.otsu import OtsuTissueDetector
 from wsistream.transforms import (
     ComposeTransforms,
@@ -24,6 +27,7 @@ from wsistream.transforms import (
     ResizeTransform,
 )
 from wsistream.transforms.base import PatchTransform
+from wsistream.types import PatchCoordinate
 
 
 # ── helpers ──
@@ -72,6 +76,58 @@ class _RandomOffsetTransform(PatchTransform):
         return out.astype(np.uint8)
 
 
+class _CountingDetector(TissueDetector):
+    """Return an all-tissue mask while tracking calls and optional failures."""
+
+    def __init__(self, failures: int = 0) -> None:
+        self.call_count = 0
+        self.failures = failures
+
+    def detect(self, thumbnail, downsample=(1.0, 1.0)):
+        self.call_count += 1
+        if self.call_count <= self.failures:
+            raise RuntimeError("tissue detection failed")
+        return np.ones(thumbnail.shape[:2], dtype=bool)
+
+
+class _CountingThumbnailBackend(FakeBackend):
+    """Track thumbnail generation across deep-copied slide handles."""
+
+    call_count = 0
+
+    def get_thumbnail(self, size: tuple[int, int]) -> np.ndarray:
+        type(self).call_count += 1
+        return super().get_thumbnail(size)
+
+
+class _MaskMutatingSampler(PatchSampler):
+    """Mutate active masks to verify cached arrays remain isolated."""
+
+    def __init__(self) -> None:
+        self.initial_fractions = []
+
+    def sample(self, slide, tissue_mask):
+        self.initial_fractions.append(tissue_mask.tissue_fraction)
+        tissue_mask.mask[:] = False
+        yield PatchCoordinate(
+            x=0,
+            y=0,
+            level=0,
+            patch_size=256,
+            mpp=slide.properties.mpp,
+            slide_path=slide.properties.path,
+        )
+
+
+def _take(pipeline: PatchPipeline, count: int):
+    """Take a finite prefix from a cycling pipeline and close its generator."""
+    iterator = iter(pipeline)
+    try:
+        return [next(iterator) for _ in range(count)]
+    finally:
+        iterator.close()
+
+
 def _pipeline_seed_probe(connection, seed: int) -> None:
     """Return RNG samples from a fresh spawned process."""
     pipeline = _make_pipeline(
@@ -86,6 +142,20 @@ def _pipeline_seed_probe(connection, seed: int) -> None:
         transform._rng.integers(0, 2**63, size=8).tolist(),
     )
     connection.send((os.getpid(), state))
+    connection.close()
+
+
+def _pipeline_cache_fork_probe(connection, pipeline: PatchPipeline) -> None:
+    """Return detector and cache state after using an inherited pipeline."""
+    list(pipeline)
+    detector = pipeline.tissue_detector
+    assert isinstance(detector, _CountingDetector)
+    connection.send(
+        (
+            detector.call_count,
+            len(pipeline._tissue_mask_cache),
+        )
+    )
     connection.close()
 
 
@@ -411,6 +481,203 @@ class TestCycleMode:
         pipeline = _make_pipeline(n_slides=3, patches_per_slide=5, cycle=False)
         patches = list(pipeline)
         assert len(patches) == 15  # exactly one pass
+
+
+class TestTissueMaskCache:
+    def test_negative_size_raises(self):
+        with pytest.raises(ValueError, match="tissue_mask_cache_size must be >= 0"):
+            _make_pipeline(tissue_mask_cache_size=-1)
+
+    def test_disabled_cache_recomputes_revisited_slide(self):
+        detector = _CountingDetector()
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=1,
+            pool_size=1,
+            cycle=True,
+            tissue_detector=detector,
+        )
+
+        _take(pipeline, 3)
+
+        assert detector.call_count == 3
+
+    def test_enabled_cache_reuses_revisited_slide(self):
+        _CountingThumbnailBackend.call_count = 0
+        detector = _CountingDetector()
+        pipeline = _make_pipeline(
+            n_slides=1,
+            backend=_CountingThumbnailBackend(),
+            patches_per_slide=1,
+            pool_size=1,
+            cycle=True,
+            tissue_detector=detector,
+            tissue_mask_cache_size=1,
+        )
+
+        _take(pipeline, 3)
+
+        assert detector.call_count == 1
+        assert _CountingThumbnailBackend.call_count == 1
+
+    def test_lru_cache_evicts_oldest_slide(self):
+        detector = _CountingDetector()
+        pipeline = _make_pipeline(
+            n_slides=3,
+            patches_per_slide=1,
+            pool_size=1,
+            cycle=True,
+            slide_sampling="sequential",
+            tissue_detector=detector,
+            tissue_mask_cache_size=2,
+        )
+
+        _take(pipeline, 4)
+
+        assert detector.call_count == 4
+        assert len(pipeline._tissue_mask_cache) == 2
+
+    def test_clear_forces_redetection(self):
+        detector = _CountingDetector()
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=1,
+            pool_size=1,
+            cycle=True,
+            tissue_detector=detector,
+            tissue_mask_cache_size=1,
+        )
+        _take(pipeline, 2)
+
+        pipeline.clear_tissue_mask_cache()
+        _take(pipeline, 1)
+
+        assert detector.call_count == 2
+
+    def test_thumbnail_size_change_invalidates_cache(self):
+        detector = _CountingDetector()
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=1,
+            pool_size=1,
+            cycle=True,
+            tissue_detector=detector,
+            tissue_mask_cache_size=1,
+        )
+        _take(pipeline, 1)
+
+        pipeline.thumbnail_size = (1024, 1024)
+        _take(pipeline, 1)
+
+        assert detector.call_count == 2
+
+    def test_component_replacement_invalidates_cache(self):
+        detector = _CountingDetector()
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=1,
+            pool_size=1,
+            tissue_detector=detector,
+            tissue_mask_cache_size=1,
+        )
+        list(pipeline)
+
+        pipeline.backend = FakeBackend(token="replacement")
+        list(pipeline)
+        assert detector.call_count == 2
+
+        replacement_detector = _CountingDetector()
+        pipeline.tissue_detector = replacement_detector
+        list(pipeline)
+        assert replacement_detector.call_count == 1
+
+    def test_cached_mask_is_isolated_from_sampler_mutation(self):
+        detector = _CountingDetector()
+        sampler = _MaskMutatingSampler()
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=1,
+            pool_size=1,
+            cycle=True,
+            tissue_detector=detector,
+            sampler=sampler,
+            tissue_mask_cache_size=1,
+        )
+
+        _take(pipeline, 2)
+
+        assert detector.call_count == 1
+        assert sampler.initial_fractions == [1.0, 1.0]
+
+    def test_negative_size_after_construction_raises(self):
+        pipeline = _make_pipeline(tissue_mask_cache_size=1)
+        pipeline.tissue_mask_cache_size = -1
+
+        with pytest.raises(ValueError, match="tissue_mask_cache_size must be >= 0"):
+            list(pipeline)
+
+    def test_failed_detection_is_not_cached(self):
+        detector = _CountingDetector(failures=1)
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=1,
+            pool_size=1,
+            tissue_detector=detector,
+            tissue_mask_cache_size=1,
+        )
+
+        assert list(pipeline) == []
+        assert len(list(pipeline)) == 1
+        assert detector.call_count == 2
+
+    def test_cache_entries_are_not_pickled(self):
+        detector = _CountingDetector()
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=1,
+            pool_size=1,
+            tissue_detector=detector,
+            tissue_mask_cache_size=1,
+        )
+        list(pipeline)
+
+        restored = pickle.loads(pickle.dumps(pipeline))
+        list(restored)
+
+        assert restored.tissue_detector.call_count == 2
+
+    def test_cache_entries_are_not_inherited_after_fork(self):
+        if "fork" not in mp.get_all_start_methods():
+            pytest.skip("fork start method unavailable")
+
+        detector = _CountingDetector()
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=1,
+            pool_size=1,
+            tissue_detector=detector,
+            tissue_mask_cache_size=1,
+        )
+        list(pipeline)
+
+        context = mp.get_context("fork")
+        receive, send = context.Pipe(duplex=False)
+        process = context.Process(target=_pipeline_cache_fork_probe, args=(send, pipeline))
+        process.start()
+        send.close()
+        try:
+            assert receive.poll(20), "forked cache probe did not return"
+            child_detector_calls, child_cache_size = receive.recv()
+        finally:
+            receive.close()
+            process.join(20)
+            if process.is_alive():
+                process.terminate()
+                process.join()
+
+        assert process.exitcode == 0
+        assert child_detector_calls == 2
+        assert child_cache_size == 1
 
 
 class TestPatchFilter:

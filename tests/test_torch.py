@@ -156,6 +156,33 @@ class TestWsiStreamDatasetIteration:
             assert item["cancer_type"] == "BRCA"
             assert item["dataset_name"] == "test"
 
+    def test_tissue_mask_cache_forwarded_to_pipeline(self, monkeypatch):
+        detector = OtsuTissueDetector()
+        call_count = 0
+        original_detect = detector.detect
+
+        def count_detect(thumbnail, downsample=(1.0, 1.0)):
+            nonlocal call_count
+            call_count += 1
+            return original_detect(thumbnail, downsample=downsample)
+
+        monkeypatch.setattr(detector, "detect", count_detect)
+        dataset = _make_dataset(
+            n_slides=1,
+            patches_per_slide=1,
+            cycle=True,
+            tissue_detector=detector,
+            tissue_mask_cache_size=1,
+        )
+        iterator = iter(dataset)
+        try:
+            for _ in range(3):
+                next(iterator)
+        finally:
+            iterator.close()
+
+        assert call_count == 1
+
 
 # ── DataLoader collation ──
 
@@ -261,6 +288,10 @@ class TestSeedDiversity:
 
 
 class TestParameterValidation:
+    def test_negative_tissue_mask_cache_size_raises(self):
+        with pytest.raises(ValueError, match="tissue_mask_cache_size must be >= 0"):
+            _make_dataset(tissue_mask_cache_size=-1)
+
     def test_invalid_slide_sampling_raises(self):
         dataset = _make_dataset(slide_sampling="bogus")
         with pytest.raises(ValueError, match="slide_sampling"):

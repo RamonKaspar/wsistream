@@ -12,8 +12,8 @@
 For each slide, the pipeline executes the following steps:
 
 1. **Open** the slide via `SlideHandle` with the configured backend
-2. **Thumbnail**: generate a low-resolution overview of the slide
-3. **Tissue detection**: run the `TissueDetector` on the thumbnail to produce a binary `TissueMask`
+2. **Thumbnail**: generate a low-resolution overview of the slide unless a compatible tissue mask is cached
+3. **Tissue detection**: run the `TissueDetector` on the thumbnail to produce a binary `TissueMask`, unless that mask was cached
 4. **Sampling**: pass the slide and mask to the `PatchSampler`, which yields `PatchCoordinate`s
 5. **Extraction**: read each patch from the slide at the specified pyramid level
 6. **Filtering**: run the `PatchFilter` on the extracted patch -- accept or reject
@@ -22,7 +22,7 @@ For each slide, the pipeline executes the following steps:
 
 Steps 3 and 6 are both tissue/quality checks, but at different resolutions:
 
-- **TissueDetector** (step 3): coarse, runs once per slide on a low-resolution thumbnail.
+- **TissueDetector** (step 3): coarse, runs once per slide opening on a low-resolution thumbnail, or once per cached slide while its mask remains in the cache.
 - **PatchFilter** (step 6): fine-grained, runs on every extracted patch. Sees actual pixel content at the sampled resolution. This is where Midnight's per-tile HSV check belongs ([Karasikov et al., 2025](https://arxiv.org/abs/2504.05186)).
 
 ## Pool-based slide interleaving
@@ -62,6 +62,22 @@ pipeline = PatchPipeline(
 ```
 
 This trades some interleaving granularity for significantly better I/O throughput. The total number of patches per slide is unchanged — only the order within the pool changes.
+
+### Tissue-mask caching
+
+With `cycle=True`, a slide may be reopened many times and tissue detection normally runs again for every opening. Set `tissue_mask_cache_size` to a positive number to retain that many successful masks in a least-recently-used cache:
+
+```python
+pipeline = PatchPipeline(
+    ...,
+    cycle=True,
+    tissue_mask_cache_size=64,
+)
+```
+
+Caching is disabled by default (`tissue_mask_cache_size=0`) because reusing a mask changes the behavior of stateful or stochastic tissue detectors and consumes memory. A boolean mask at the default `thumbnail_size=(2048, 2048)` occupies approximately 4 MiB, so 64 entries require approximately 256 MiB, excluding small object overhead. The cache belongs to one `PatchPipeline` instance in one process; with `WsiStreamDataset`, each DataLoader worker and each new dataset iteration creates its own cache, so multiply the configured capacity by the number of active workers when estimating peak memory.
+
+Cache entries are invalidated automatically when the backend object, tissue-detector object, or `thumbnail_size` is replaced. If a detector or backend is mutated in place, a slide file is replaced while the pipeline is alive, or any other input to mask generation changes without replacing those objects, call `pipeline.clear_tissue_mask_cache()` before continuing; for `WsiStreamDataset`, close the active iterator and create a new one. Only successful detections are cached, cached arrays are isolated from sampler mutations, and cache contents are not serialized into worker processes.
 
 ## Data types
 
@@ -125,6 +141,7 @@ PatchPipeline(
     shared_transforms=...,      # optional transform applied once before per-view processing
     dataset_adapter=...,        # attach dataset-specific metadata (e.g., TCGA)
     thumbnail_size=(2048, 2048),# resolution for tissue detection
+    tissue_mask_cache_size=0,   # bounded LRU cache; 0 disables caching
     pool_size=8,                # slides open simultaneously
     patches_per_slide=100,      # per-slide budget before rotation
     patches_per_visit=1,        # patches per slide before round-robin (increase for I/O locality)

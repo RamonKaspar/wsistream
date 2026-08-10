@@ -15,7 +15,7 @@ import os
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, TypeVar
 
 import cv2
 
@@ -41,6 +41,8 @@ from wsistream.views import ViewConfig, expand_view_names
 
 logger = logging.getLogger(__name__)
 
+_ComponentT = TypeVar("_ComponentT")
+
 # Keys that WsiStreamDataset always writes into every batch item.
 # View names must not collide with any of these.
 _RESERVED_BATCH_KEYS: frozenset[str] = frozenset(
@@ -64,6 +66,23 @@ _RESERVED_BATCH_KEYS: frozenset[str] = frozenset(
         "extra",
     }
 )
+
+
+def _clone_component(component: _ComponentT, name: str) -> _ComponentT:
+    """Return an independent copy of a stateful pipeline component."""
+    try:
+        cloned = copy.deepcopy(component)
+    except Exception as exc:
+        raise TypeError(
+            f"{name} ({type(component).__name__}) must support copy.deepcopy() "
+            "so each pipeline owns independent state"
+        ) from exc
+    if cloned is component:
+        raise TypeError(
+            f"{name} ({type(component).__name__}) must return an independent "
+            "instance from copy.deepcopy()"
+        )
+    return cloned
 
 
 @dataclass
@@ -276,14 +295,16 @@ class PatchPipeline:
     tissue_detector : TissueDetector
         Strategy for detecting tissue regions.
     sampler : PatchSampler
-        Strategy for sampling patch coordinates.
+        Strategy for sampling patch coordinates.  A deep copy is created for
+        this pipeline before its RNG is seeded.
     patch_filter : PatchFilter or None
         Per-tile quality filter applied after extraction, before transforms.
         A rejected patch is discarded and the pipeline moves on to the next
         sample.  Rejected patches still count towards ``patches_per_slide``
         to prevent infinite loops when a filter rejects everything.
     transforms : PatchTransform or None
-        Transform pipeline applied to each patch.
+        Transform pipeline applied to each patch.  A deep copy is created for
+        this pipeline before transform RNGs are seeded.
     dataset_adapter : DatasetAdapter or None
         Extracts dataset-specific metadata from slide paths.
     thumbnail_size : tuple[int, int]
@@ -324,10 +345,12 @@ class PatchPipeline:
         distinct deterministic seed for each DataLoader worker.
     views : list[ViewConfig] or None
         Optional multi-view configuration.  Mutually exclusive with
-        ``transforms``.
+        ``transforms``.  Views, crops, and per-view transforms are deep-copied
+        before their RNGs are seeded.
     shared_transforms : PatchTransform or None
         Optional transform chain applied once to the primary extracted
-        patch before per-view crop/transform processing.
+        patch before per-view crop/transform processing.  A deep copy is
+        created for this pipeline before transform RNGs are seeded.
     tissue_mask_cache_size : int
         Maximum number of tissue masks cached by this pipeline instance in
         its current process. Uses least-recently-used eviction. ``0``
@@ -416,6 +439,16 @@ class PatchPipeline:
                     f"duplicate paths: {sorted(duplicates)}"
                 )
         self.slide_paths = resolved_paths
+        self.sampler = _clone_component(self.sampler, "sampler")
+        if self.transforms is not None:
+            self.transforms = _clone_component(self.transforms, "transforms")
+        if self.shared_transforms is not None:
+            self.shared_transforms = _clone_component(
+                self.shared_transforms,
+                "shared_transforms",
+            )
+        if self.views is not None:
+            self.views = _clone_component(self.views, "views")
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
         self._coordinate_pools: dict[str, object] = {}

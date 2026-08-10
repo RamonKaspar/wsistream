@@ -538,9 +538,12 @@ class TestPatchPipelineViews:
             cycle=False,
         )
         results = list(pipeline)
+        pipeline_crop = pipeline.views[0].crop
+        assert isinstance(pipeline_crop, _RecordingCrop)
         assert len(results) == 4
-        assert len(crop.params) == 4
-        assert len(set(crop.params)) > 1
+        assert crop.params == []
+        assert len(pipeline_crop.params) == 4
+        assert len(set(pipeline_crop.params)) > 1
 
 
 class TestWsiStreamDatasetViews:
@@ -745,12 +748,15 @@ class TestMppOverrideFallback:
             patches_per_slide=1,
         )
         result = next(iter(pipeline))
+        pipeline_crop = pipeline.views[0].crop
+        assert isinstance(pipeline_crop, _RecordingCrop)
         assert set(result.views) == {"ctx_0", "ctx_1", "ctx_2"}
         # Slide is read exactly once for the override (not once per count).
         assert len(_TrackBackend.calls) == 2
         # Each iteration draws a different random crop from the same override image.
-        assert len(crop.params) == 3
-        assert len(set(crop.params)) > 1
+        assert crop.params == []
+        assert len(pipeline_crop.params) == 3
+        assert len(set(pipeline_crop.params)) > 1
 
     def test_count_without_crop_or_transforms_warns(self):
         with pytest.warns(UserWarning, match="identical copies"):

@@ -28,6 +28,7 @@ from wsistream.transforms import (
 )
 from wsistream.transforms.base import PatchTransform
 from wsistream.types import PatchCoordinate
+from wsistream.views import RandomResizedCrop, ViewConfig
 
 
 # ── helpers ──
@@ -74,6 +75,14 @@ class _RandomOffsetTransform(PatchTransform):
         delta = int(self._rng.integers(1, 8))
         out = np.clip(image.astype(np.int16) + delta, 0, 255)
         return out.astype(np.uint8)
+
+
+class _NonCopyableTransform(PatchTransform):
+    def __deepcopy__(self, memo):
+        raise RuntimeError("cannot copy")
+
+    def __call__(self, image: np.ndarray) -> np.ndarray:
+        return image
 
 
 class _CountingDetector(TissueDetector):
@@ -366,6 +375,85 @@ class TestSlideSampling:
         assert first_pid != second_pid
         assert first_state == second_state
 
+    def test_shared_components_do_not_change_an_existing_pipeline(self):
+        sampler = RandomSampler(patch_size=256, num_patches=-1)
+        transform = _RandomOffsetTransform()
+        sampler_state = pickle.dumps(sampler._rng.bit_generator.state)
+        transform_state = pickle.dumps(transform._rng.bit_generator.state)
+        pipeline1 = _make_pipeline(
+            n_slides=1,
+            sampler=sampler,
+            transforms=transform,
+            seed=11,
+        )
+        pipeline2 = _make_pipeline(
+            n_slides=1,
+            sampler=sampler,
+            transforms=transform,
+            seed=22,
+        )
+        reference = _make_pipeline(
+            n_slides=1,
+            sampler=RandomSampler(patch_size=256, num_patches=-1),
+            transforms=_RandomOffsetTransform(),
+            seed=11,
+        )
+
+        def _outputs(pipeline):
+            return [
+                (result.coordinate.x, result.coordinate.y, int(result.image[0, 0, 0]))
+                for result in pipeline
+            ]
+
+        assert pipeline1.sampler is not sampler
+        assert pipeline2.sampler is not sampler
+        assert pipeline1.sampler is not pipeline2.sampler
+        assert pipeline1.transforms is not transform
+        assert pipeline2.transforms is not transform
+        assert pipeline1.transforms is not pipeline2.transforms
+        assert pickle.dumps(sampler._rng.bit_generator.state) == sampler_state
+        assert pickle.dumps(transform._rng.bit_generator.state) == transform_state
+        assert _outputs(pipeline1) == _outputs(reference)
+
+    def test_views_and_crops_are_pipeline_owned(self):
+        views = [
+            ViewConfig(
+                name="view",
+                crop=RandomResizedCrop(size=64, scale=(0.2, 1.0)),
+                transforms=_RandomOffsetTransform(),
+            )
+        ]
+        shared_transform = _RandomOffsetTransform()
+        pipeline1 = _make_pipeline(
+            n_slides=1,
+            views=views,
+            shared_transforms=shared_transform,
+            seed=11,
+        )
+        pipeline2 = _make_pipeline(
+            n_slides=1,
+            views=views,
+            shared_transforms=shared_transform,
+            seed=22,
+        )
+
+        assert pipeline1.views is not views
+        assert pipeline2.views is not views
+        assert pipeline1.views is not None
+        assert pipeline2.views is not None
+        assert pipeline1.views[0] is not pipeline2.views[0]
+        assert pipeline1.views[0].crop is not views[0].crop
+        assert pipeline2.views[0].crop is not views[0].crop
+        assert pipeline1.views[0].transforms is not views[0].transforms
+        assert pipeline2.views[0].transforms is not views[0].transforms
+        assert pipeline1.shared_transforms is not shared_transform
+        assert pipeline2.shared_transforms is not shared_transform
+        assert pipeline1.shared_transforms is not pipeline2.shared_transforms
+
+    def test_non_copyable_component_raises(self):
+        with pytest.raises(TypeError, match="transforms.*must support copy.deepcopy"):
+            _make_pipeline(transforms=_NonCopyableTransform())
+
     def test_random_slide_sampling_is_seeded(self):
         # Use 20 slides so that a random permutation equalling alphabetical
         # order is astronomically unlikely (probability 1/20! ≈ 2e-19).
@@ -607,7 +695,7 @@ class TestTissueMaskCache:
         _take(pipeline, 2)
 
         assert detector.call_count == 1
-        assert sampler.initial_fractions == [1.0, 1.0]
+        assert pipeline.sampler.initial_fractions == [1.0, 1.0]
 
     def test_negative_size_after_construction_raises(self):
         pipeline = _make_pipeline(tissue_mask_cache_size=1)
@@ -726,7 +814,7 @@ class TestTransformIntegration:
             transforms=counter,
         )
         list(pipeline)
-        assert counter.call_count == 5
+        assert pipeline.transforms.call_count == 5
 
     def test_normalize_changes_dtype(self):
         norm = NormalizeTransform(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))

@@ -233,11 +233,12 @@ class WsiStreamDataset(IterableDataset):
     tissue_detector : TissueDetector
         Tissue detection strategy.
     sampler : PatchSampler
-        Patch sampling strategy.
+        Patch sampling strategy used as a prototype for each iterator.
     patch_filter : PatchFilter or None
         Optional per-tile quality filter.
     transforms : PatchTransform or None
         Optional numpy-level augmentations applied before tensor conversion.
+        Each iterator uses an independent copy.
     dataset_adapter : DatasetAdapter or None
         Optional dataset-specific metadata extractor.
     pool_size : int
@@ -262,10 +263,12 @@ class WsiStreamDataset(IterableDataset):
         ``None`` (default) draws fresh entropy for every iteration.
     views : list[ViewConfig] or None
         Optional multi-view configuration.  Mutually exclusive with
-        ``transforms``; see :class:`~wsistream.pipeline.PatchPipeline`.
+        ``transforms``; each iterator uses independent copies of views, crops,
+        and transforms.  See :class:`~wsistream.pipeline.PatchPipeline`.
     shared_transforms : PatchTransform or None
         Optional transform chain applied once to the primary extracted patch
-        before per-view crop and transform processing.  Requires ``views``.
+        before per-view crop and transform processing.  Each iterator uses an
+        independent copy.  Requires ``views``.
     tissue_mask_cache_size : int
         Maximum tissue masks cached per worker and iterator. Uses
         least-recently-used eviction. ``0`` (default) disables caching.

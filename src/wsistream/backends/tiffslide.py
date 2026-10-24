@@ -19,17 +19,25 @@ class TiffSlideBackend(SlideBackend):
 
     Pure Python, no C dependencies. Supports cloud storage (S3/GCS) via fsspec.
     Requires: pip install tiffslide
+
+    Parameters
+    ----------
+    storage_options : dict or None
+        Options for the fsspec filesystem that opens remote slides, e.g.
+        ``{"anon": True}`` for a public S3 bucket. The filesystem's package
+        (``s3fs``, ``gcsfs``, ...) must be installed. Default: ``None``.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, storage_options: dict[str, object] | None = None) -> None:
         self._slide: TiffSlide | None = None
         self._path: str | None = None
+        self._storage_options = storage_options
 
     def open(self, path: str) -> None:
         from tiffslide import TiffSlide
 
         self._path = path
-        self._slide = TiffSlide(path)
+        self._slide = TiffSlide(path, storage_options=self._storage_options)
 
     def close(self) -> None:
         if self._slide is not None:
@@ -66,4 +74,8 @@ class TiffSlideBackend(SlideBackend):
         )
 
     def __repr__(self) -> str:
-        return "TiffSlideBackend()"
+        if self._storage_options is None:
+            return "TiffSlideBackend()"
+        # Option values can be credentials, so only the keys are shown.
+        keys = ", ".join(f"{key!r}: ..." for key in sorted(self._storage_options))
+        return f"TiffSlideBackend(storage_options={{{keys}}})"

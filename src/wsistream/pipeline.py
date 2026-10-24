@@ -518,8 +518,12 @@ class PatchPipeline:
                 # Try to get the next patch coordinate from this slide's sampler
                 try:
                     coord = next(entry.sampler_iter)
-                except StopIteration:
-                    # Sampler exhausted for this slide
+                except Exception as exc:
+                    # StopIteration means the sampler is exhausted for this slide.
+                    # Any other error is specific to this slide (e.g. a fixed level
+                    # it does not have), so skip the slide instead of the stream.
+                    if not isinstance(exc, StopIteration):
+                        self._fail_sampling(entry, exc)
                     self._close_entry(entry)
                     pool.pop(pool_idx)
                     self._fill_pool(pool, slide_queue)
@@ -901,6 +905,14 @@ class PatchPipeline:
         self._tissue_mask_cache.put(cache_key, tissue_mask)
         return tissue_mask
 
+    def _fail_sampling(self, entry: _PoolEntry, exc: Exception) -> None:
+        """Record a sampler error and blacklist the slide, since it recurs on reopening."""
+        slide_path = entry.slide.properties.path
+        logger.warning("Error sampling patches from %s: %s", slide_path, exc)
+        self._stats.record_error(slide_path, str(exc))
+        self._stats.slides_failed += 1
+        self._failed_slides.add(slide_path)
+
     def _close_entry(self, entry: _PoolEntry) -> None:
         try:
             entry.slide.close()
@@ -909,8 +921,13 @@ class PatchPipeline:
         # If a slide used its full budget but had zero successful reads,
         # it is effectively broken. Blacklist it so cycle mode doesn't
         # reopen it endlessly.
-        if entry.patch_count > 0 and entry.successful_reads == 0:
-            self._failed_slides.add(entry.slide.properties.path)
+        slide_path = entry.slide.properties.path
+        if (
+            entry.patch_count > 0
+            and entry.successful_reads == 0
+            and slide_path not in self._failed_slides
+        ):
+            self._failed_slides.add(slide_path)
             self._stats.slides_failed += 1
 
     def _get_slide_order(self) -> list[str]:

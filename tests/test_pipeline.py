@@ -993,6 +993,60 @@ class TestErrorHandling:
         # Both slides should have been closed despite the failure
         assert len(closed_slides) == 2
 
+    def test_sampler_error_skips_only_that_slide(self):
+        """A sampler that raises for one slide must not end the stream."""
+        paths = fake_slide_paths(3)
+
+        class _FailOnSlide1(RandomSampler):
+            def sample(self, slide, tissue_mask):
+                if slide.properties.path == paths[1]:
+                    raise ValueError("level=3 is out of range for slide with 3 levels")
+                yield from super().sample(slide, tissue_mask)
+
+        pipeline = PatchPipeline(
+            slide_paths=paths,
+            backend=FakeBackend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=_FailOnSlide1(patch_size=256, num_patches=-1, seed=42),
+            pool_size=3,
+            patches_per_slide=5,
+        )
+        patches = list(pipeline)
+        assert len(patches) == 10
+        assert {p.coordinate.slide_path for p in patches} == {paths[0], paths[2]}
+        assert pipeline.stats.slides_failed == 1
+        assert pipeline.stats.error_count == 1
+        assert pipeline.stats.recent_errors[0][0] == paths[1]
+        assert "out of range" in pipeline.stats.recent_errors[0][1]
+
+    def test_sampler_error_is_not_retried_in_cycle_mode(self):
+        """The failing slide is blacklisted instead of reopened on every cycle."""
+        paths = fake_slide_paths(3)
+        sample_calls = Counter()
+
+        class _FailOnSlide1(RandomSampler):
+            def sample(self, slide, tissue_mask):
+                sample_calls[slide.properties.path] += 1
+                if slide.properties.path == paths[1]:
+                    raise ValueError("level=3 is out of range for slide with 3 levels")
+                yield from super().sample(slide, tissue_mask)
+
+        pipeline = PatchPipeline(
+            slide_paths=paths,
+            backend=FakeBackend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=_FailOnSlide1(patch_size=256, num_patches=-1, seed=42),
+            pool_size=2,
+            patches_per_slide=2,
+            cycle=True,
+        )
+        iterator = iter(pipeline)
+        patches = [next(iterator) for _ in range(20)]
+        assert {p.coordinate.slide_path for p in patches} == {paths[0], paths[2]}
+        assert sample_calls[paths[1]] == 1
+        assert sample_calls[paths[0]] >= 5
+        assert pipeline.stats.slides_failed == 1
+
 
 class TestCycleRngDiversity:
     def test_revisited_slide_gets_different_patches(self):

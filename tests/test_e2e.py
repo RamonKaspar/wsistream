@@ -170,6 +170,37 @@ class TestCycleMode:
         ), f"No slide was revisited (max patches from one slide: {max_visits})"
 
 
+class TestSamplerErrors:
+    """A sampler error on one slide must skip that slide, not end the stream."""
+
+    def test_fixed_level_missing_on_some_slides(self, slides, make_backend):
+        from wsistream.slide import SlideHandle
+
+        level_counts = {}
+        for slide_path in slides:
+            with SlideHandle(slide_path, backend=make_backend()) as slide:
+                level_counts[slide_path] = slide.properties.level_count
+        shallow = {path for path, count in level_counts.items() if count <= 2}
+        deep = set(level_counts) - shallow
+        if not shallow or not deep:
+            pytest.skip("Needs slides with and without a third pyramid level")
+
+        pipeline = PatchPipeline(
+            slide_paths=slides,
+            backend=make_backend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=256, num_patches=-1, level=2, seed=42),
+            pool_size=min(4, len(slides)),
+            patches_per_slide=3,
+        )
+        results = list(pipeline)
+
+        sampled = {r.coordinate.slide_path for r in results}
+        assert sampled and sampled <= deep
+        assert pipeline.stats.slides_failed == len(shallow)
+        assert {path for path, _ in pipeline.stats.recent_errors} == shallow
+
+
 class TestTissueMaskCache:
     """Cached masks must survive real slide reopenings."""
 

@@ -4,6 +4,9 @@ Samplers determine **where** to extract patches. They receive a `SlideHandle` an
 
 Samplers only propose coordinates based on the tissue mask (a coarse thumbnail-level check). The pipeline may still reject patches after extraction via a [PatchFilter](filters.md) (a fine-grained per-tile check).
 
+!!! note "Seeding"
+    Inside `PatchPipeline` and `WsiStreamDataset`, a sampler's `seed` is ignored: its random generator is reseeded from the pipeline's `seed`, or from fresh entropy when that is `None`, like the generators of transforms and crops. Set `seed` on the pipeline for reproducible sampling.
+
 <figure markdown="span">
   ![Sampler comparison](../assets/samplers.svg)
   <figcaption>Comparison of the three sampling strategies on a TCGA slide. RandomSampler and MultiMagnificationSampler produce stochastic coordinates; GridSampler produces a deterministic grid. For MultiMagnificationSampler, colors indicate different pyramid levels.</figcaption>

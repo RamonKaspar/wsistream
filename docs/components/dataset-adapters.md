@@ -27,7 +27,7 @@ meta.extra          # {"tissue_source_site": "3L", "vial": "Z", "portion": "00",
 The cancer type is inferred from the parent directory name (e.g., `TCGA-BRCA/`). You can override it:
 
 ```python
-adapter = TCGAAdapter(cancer_type="LUAD")
+adapter = TCGAAdapter(cancer_type="TCGA-LUAD")
 ```
 
 The adapter also distinguishes diagnostic slides (`DX`) from frozen sections (`TS`, `BS`, `MS`) via the `is_frozen` field in `extra`.
@@ -139,14 +139,14 @@ for result in pipeline:
 
 ## What gets logged
 
-When a `DatasetAdapter` is configured, `pipeline.stats_dict()` includes dataset-specific counts:
+When a `DatasetAdapter` is configured, `pipeline.stats_dict()` includes dataset-specific counts. Each slide opening counts once, so with `cycle=True` a slide that is reopened counts again:
 
 ```python
 {
-    "pipeline/cancer_type/TCGA-BRCA": 150,
-    "pipeline/cancer_type/TCGA-LUAD": 120,
-    "pipeline/sample_type/primary_solid_tumor": 250,
-    "pipeline/sample_type/solid_tissue_normal": 20,
+    "pipeline/cancer_type/TCGA-BRCA": 15,
+    "pipeline/cancer_type/TCGA-LUAD": 12,
+    "pipeline/sample_type/primary_solid_tumor": 25,
+    "pipeline/sample_type/solid_tissue_normal": 2,
     ...
 }
 ```

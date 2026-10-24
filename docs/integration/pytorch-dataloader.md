@@ -127,7 +127,7 @@ See [Weights & Biases](wandb.md) for details on what metrics are included.
 
 ## Contiguous arrays
 
-Numpy arrays from `np.flip` or `np.rot90` (used by `RandomFlipRotate`) may not be contiguous in memory, which causes `torch.from_numpy` to fail. `WsiStreamDataset` handles this internally with `np.ascontiguousarray()`.
+Custom transforms may return views with negative strides, such as the results of `np.flip` or `np.rot90` without a copy, which `torch.from_numpy` rejects. `WsiStreamDataset` handles this internally with `np.ascontiguousarray()`.
 
 ## Full example
 

@@ -32,7 +32,7 @@ detector = OtsuTissueDetector(
 
 Reimplements the tissue segmentation from [CLAM](https://github.com/mahmoodlab/CLAM) (`wsi_core/WholeSlideImage.py`). Thresholds the saturation channel in HSV space, applies median blur (before thresholding), morphological closing with a square kernel, then filters contours by net area (parent area minus holes) with hole sorting and truncation.
 
-Defaults match CLAM's `create_patches_fp.py`.
+Defaults match CLAM's `create_patches_fp.py`. CLAM segments the pyramid level that OpenSlide picks for a 64x downsample (`get_best_level_for_downsample(64)`), whereas wsistream runs every detector on the pipeline thumbnail (`thumbnail_size`, 2048 px by default). The area thresholds are scaled by the downsample, but the median blur (`mthresh`) and closing (`close`) kernels are in thumbnail pixels, so masks match CLAM most closely when the thumbnail has the resolution of that level.
 
 ```python
 from wsistream.tissue import CLAMTissueDetector

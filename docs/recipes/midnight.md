@@ -141,7 +141,7 @@ kaiko's public [midnight repo](https://github.com/kaiko-ai/midnight) contains ev
 | DINOv2 local crops | 98px (paper-stated) | `local_crops_size: 98` (overrides the 96 default), `scale (0.05, 0.32)`, count 8 | `size=98, scale=(0.05, 0.32), count=8` |
 | Per-crop augmentations | Not specified | ColorJitter(0.2, 0.2, 0.1, 0.05) p=0.8, RandomGrayscale p=0.2, HorizontalFlip p=0.5, GaussianBlur constructed with p=1.0/0.1/0.5 but [effectively 0%/90%/50%](../components/views.md#dinov2-style-multi-crop-for-pathology). RandStainNA and 90° rotation present but commented out | Not included by default |
 
-Before trying to match OpenMidnight's HED via `sigma_bias`, read the [scale warning](../components/transforms.md#hedcoloraugmentation): their additive perturbation sits in a much more aggressive regime than `sigma=0.05` suggests.
+OpenMidnight's additive term is much stronger than `sigma_bias=0.05`. `skimage.rgb2hed` divides optical density by `-log(1e-6)` ≈ 13.8, so its ±0.05 corresponds to ±0.69 in the optical-density units of `HEDColorAugmentation`. `HEDColorAugmentation(sigma=0.0, sigma_bias=0.69)` reproduces that term, without OpenMidnight's `p=0.5` and clipping.
 
 ## Earlier Kaiko-FM pipeline (Aben et al., 2024)
 

@@ -234,6 +234,7 @@ class TestEnumerateGridCoordinates:
                         fake_slide, tissue_mask, level, patch_size, threshold
                     )
                     for c in coords:
+                        assert (type(c.x), type(c.y)) == (int, int)
                         assert (c.level, c.patch_size) == (level, patch_size)
                         assert c.mpp == fake_slide.properties.mpp_at_level(level)
 

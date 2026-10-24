@@ -165,16 +165,19 @@ def enumerate_grid_coordinates(
     rows, cols = np.nonzero(fractions >= tissue_threshold)
 
     # np.nonzero is row-major, so the order matches a y-then-x scan of the grid.
+    # Coordinates in one row or column share their Python ints, which keeps
+    # large pools small.
+    x_values, y_values = xs.tolist(), ys.tolist()
     return [
         PatchCoordinate(
-            x=int(xs[col]),
-            y=int(ys[row]),
+            x=x_values[col],
+            y=y_values[row],
             level=level,
             patch_size=patch_size,
             mpp=mpp,
             slide_path=props.path,
         )
-        for row, col in zip(rows, cols)
+        for row, col in zip(rows.tolist(), cols.tolist())
     ]
 
 

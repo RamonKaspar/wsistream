@@ -7,11 +7,12 @@ from collections import Counter
 import numpy as np
 import pytest
 
+from wsistream.sampling import resolve_mpp_read
 from wsistream.sampling.grid import GridSampler
 from wsistream.sampling.multi_magnification import MultiMagnificationSampler
 from wsistream.sampling.random import RandomSampler
 from wsistream.slide import SlideHandle
-from wsistream.types import TissueMask
+from wsistream.types import SlideProperties, TissueMask
 
 
 @pytest.fixture
@@ -45,6 +46,67 @@ def center_tissue_mask():
 
 
 # ── RandomSampler ──
+
+
+def _scanner_properties(mpp: float | None, level_downsamples: tuple[float, ...]) -> SlideProperties:
+    """Properties of a 100k x 50k slide with the given pyramid, as scanners write them."""
+    return SlideProperties(
+        path="scanner.svs",
+        dimensions=(100_000, 50_000),
+        level_count=len(level_downsamples),
+        level_dimensions=tuple((int(100_000 / ds), int(50_000 / ds)) for ds in level_downsamples),
+        level_downsamples=level_downsamples,
+        mpp=mpp,
+        vendor="aperio",
+    )
+
+
+# Pyramids of TCGA slides: 40x (TCGA-E9-A1N4 DX1), 40x with a 0.2325 µm/px
+# scan (TCGA-AA-3949 DX1), and 20x (TCGA-12-1600 TS1).
+_TCGA_40X = _scanner_properties(0.2485, (1.0, 4.0, 16.001, 32.005))
+_TCGA_40X_COARSE = _scanner_properties(0.2325, (1.0, 4.0, 16.0, 64.0))
+_TCGA_20X = _scanner_properties(0.5015, (1.0, 4.001))
+
+
+class TestResolveMppRead:
+    def test_level_within_tolerance_is_read_directly(self):
+        assert resolve_mpp_read(_TCGA_40X, 0.25, 256, 0.1) == (0, 256, 0.2485)
+        assert resolve_mpp_read(_TCGA_40X, 1.0, 256, 0.1) == (1, 256, 0.2485 * 4.0)
+
+    def test_tolerance_is_relative_to_target(self):
+        """0.2325 µm/px is 7% from 0.25, so it is read directly."""
+        assert resolve_mpp_read(_TCGA_40X_COARSE, 0.25, 256, 0.1) == (0, 256, 0.2325)
+        level, read_size, mpp = resolve_mpp_read(_TCGA_40X_COARSE, 0.25, 256, 0.05)
+        assert (level, read_size) == (0, 275)
+        assert mpp == pytest.approx(0.25, rel=1e-2)
+
+    def test_missing_level_is_read_from_coarsest_finer_level(self):
+        """0.5 µm/px on a 40x slide is read at 0.2485 µm/px, 2x larger."""
+        level, read_size, mpp = resolve_mpp_read(_TCGA_40X, 0.5, 256, 0.1)
+        assert (level, read_size) == (0, 515)
+        assert mpp == pytest.approx(0.2485 * 515 / 256)
+
+        level, read_size, mpp = resolve_mpp_read(_TCGA_40X, 2.0, 256, 0.1)
+        assert (level, read_size) == (1, 515)
+        assert mpp == pytest.approx(0.994 * 515 / 256)
+
+    def test_target_finer_than_slide_reads_native_level_0(self):
+        """A 20x slide cannot provide 0.25 µm/px; enlarging would not add detail."""
+        assert resolve_mpp_read(_TCGA_20X, 0.25, 256, 0.1) == (0, 256, 0.5015)
+
+    def test_infinite_tolerance_reads_closest_level(self):
+        props = _TCGA_40X
+        for target in (0.25, 0.5, 1.0, 2.0, 8.0):
+            level, read_size, _ = resolve_mpp_read(props, target, 256, float("inf"))
+            closest = min(
+                range(props.level_count),
+                key=lambda lvl: abs(props.mpp_at_level(lvl) - target),
+            )
+            assert (level, read_size) == (closest, 256)
+
+    def test_requires_mpp(self):
+        with pytest.raises(ValueError, match="no MPP metadata"):
+            resolve_mpp_read(_scanner_properties(None, (1.0, 4.0)), 0.5, 256, 0.1)
 
 
 class TestRandomSampler:
@@ -210,8 +272,8 @@ class TestRandomSampler:
         for c in coords:
             assert c.level == 1  # target_mpp=0.5 → level 1, not level 0
 
-    def test_target_mpp_closest_match(self, fake_slide, full_tissue_mask):
-        """target_mpp=0.6 should pick level 1 (mpp=0.5), not level 2 (mpp=1.0)."""
+    def test_target_mpp_resamples_without_matching_level(self, fake_slide, full_tissue_mask):
+        """No level is within 10% of 0.6, so 307 px are read at level 1 (mpp=0.5)."""
         sampler = RandomSampler(
             patch_size=256,
             num_patches=3,
@@ -219,8 +281,41 @@ class TestRandomSampler:
             seed=42,
         )
         coords = list(sampler.sample(fake_slide, full_tissue_mask))
+        assert len(coords) == 3
         for c in coords:
             assert c.level == 1
+            assert c.patch_size == 307
+            assert c.mpp == pytest.approx(0.6, rel=1e-2)
+
+    def test_target_mpp_within_tolerance_reads_level_directly(self, fake_slide, full_tissue_mask):
+        """0.53 is 6% from level 1 (mpp=0.5), inside the default 10% tolerance."""
+        sampler = RandomSampler(patch_size=256, num_patches=3, target_mpp=0.53, seed=42)
+        for c in sampler.sample(fake_slide, full_tissue_mask):
+            assert (c.level, c.patch_size, c.mpp) == (1, 256, 0.5)
+
+    def test_target_mpp_finer_than_slide_reads_native_level_0(self, fake_slide, full_tissue_mask):
+        sampler = RandomSampler(patch_size=256, num_patches=3, target_mpp=0.1, seed=42)
+        for c in sampler.sample(fake_slide, full_tissue_mask):
+            assert (c.level, c.patch_size, c.mpp) == (0, 256, 0.25)
+
+    def test_infinite_mpp_tolerance_reads_closest_level(self, fake_slide, full_tissue_mask):
+        sampler = RandomSampler(
+            patch_size=256,
+            num_patches=3,
+            target_mpp=0.6,
+            seed=42,
+            mpp_tolerance=float("inf"),
+        )
+        for c in sampler.sample(fake_slide, full_tissue_mask):
+            assert (c.level, c.patch_size, c.mpp) == (1, 256, 0.5)
+
+    @pytest.mark.parametrize("mpp_tolerance", [-0.1, float("nan")])
+    def test_invalid_mpp_tolerance(self, mpp_tolerance):
+        with pytest.raises(ValueError, match="mpp_tolerance"):
+            RandomSampler(mpp_tolerance=mpp_tolerance)
+
+    def test_output_size_is_patch_size(self):
+        assert RandomSampler(patch_size=224, target_mpp=0.5).output_size == 224
 
     def test_target_mpp_no_mpp_fallback(self, fake_backend, full_tissue_mask):
         """Slide without MPP metadata → target_mpp falls back to level 0."""
@@ -319,6 +414,30 @@ class TestMultiMagnificationSampler:
             levels[coord.level] += 1
         # With 30 patches and 3 levels, each should get some
         assert len(levels) >= 2
+
+    def test_resamples_targets_without_matching_level(self, fake_slide, full_tissue_mask):
+        """2.0 µm/px has no level, so 512 px are read at level 2 (mpp=1.0)."""
+        sampler = MultiMagnificationSampler(
+            target_mpps=[2.0],
+            patch_size=256,
+            num_patches=5,
+            seed=42,
+        )
+        coords = list(sampler.sample(fake_slide, full_tissue_mask))
+        assert len(coords) == 5
+        for c in coords:
+            assert (c.level, c.patch_size, c.mpp) == (2, 512, 2.0)
+
+    def test_mpp_tolerance_reaches_inner_sampler(self, fake_slide, full_tissue_mask):
+        sampler = MultiMagnificationSampler(
+            target_mpps=[2.0],
+            patch_size=256,
+            num_patches=5,
+            seed=42,
+            mpp_tolerance=float("inf"),
+        )
+        for c in sampler.sample(fake_slide, full_tissue_mask):
+            assert (c.level, c.patch_size, c.mpp) == (2, 256, 1.0)
 
     def test_respects_count(self, fake_slide, full_tissue_mask):
         sampler = MultiMagnificationSampler(

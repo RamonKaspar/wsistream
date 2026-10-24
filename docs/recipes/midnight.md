@@ -22,7 +22,7 @@ Midnight uses **online patching** — tiles are sampled uniformly at random from
 
 The exact paper-matched parts are `tissue_threshold=0.4` for the 40% foreground-overlap requirement and `HSVPatchFilter` for the per-tile ≥60% HSV acceptance rule. We use `HSVTissueDetector` as a coarse thumbnail-stage heuristic to build the foreground mask; the paper instead uses a U-Net-based model that is not publicly available.
 
-The paper uses random sampling (not grid extraction), which `MultiMagnificationSampler` captures at the level of random online patch draws across the four target MPPs. Because wsistream selects the closest existing pyramid level per slide, this is exact only when those MPPs are present in the slide pyramid.
+The paper uses random sampling (not grid extraction), which `MultiMagnificationSampler` captures at the level of random online patch draws across the four target MPPs. A target without a matching pyramid level is read from a finer level and shrunk to 256x256, so a 40x TCGA slide (levels at about 0.25, 1.0, and 4.0 µm/px) still yields all four magnifications. A 20x slide cannot yield 0.25 µm/px; that target falls back to the native 0.5 µm/px.
 
 ```python
 from wsistream.pipeline import PatchPipeline
@@ -113,7 +113,7 @@ pipeline = PatchPipeline(
 | Foreground mask | U-Net segmentation model (trained on NKI annotations, not open-sourced) | `HSVTissueDetector` | **Approximate** — heuristic substitute for a learned model |
 | Foreground threshold | 40% | `tissue_threshold=0.4` | Exact |
 | Per-tile HSV filter | ≥60% pixels in hue [90, 180], sat [8, 255], val [103, 255] | `HSVPatchFilter(min_pixel_fraction=0.6)` | Exact |
-| Magnifications | 0.25, 0.5, 1.0, 2.0 µm/px | `target_mpps=[0.25, 0.5, 1.0, 2.0]` | Exact (nearest level used when pyramid lacks a match) |
+| Magnifications | 0.25, 0.5, 1.0, 2.0 µm/px | `target_mpps=[0.25, 0.5, 1.0, 2.0]` | Exact on slides scanned at about 0.25 µm/px; missing levels are resampled from a finer level, and 20x slides read 0.25 µm/px at their native 0.5 µm/px |
 | Magnification weights | Not specified in paper | Uniform (default) | Unknown |
 | Sampling strategy | Online random from arbitrary positions | `num_patches=-1` (infinite random with replacement) | Exact |
 | Tile size | 256×256 | `patch_size=256` | Exact |

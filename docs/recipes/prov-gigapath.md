@@ -20,7 +20,7 @@ Prov-GigaPath uses **offline** Otsu-based tissue segmentation, resolution normal
 
 Prov-GigaPath extracts **all** non-overlapping tissue tiles at 20× offline. This is fundamentally a `GridSampler` workflow. However, `GridSampler` yields patches in fixed scan order, so with a finite `patches_per_slide` it always selects the same top-left-biased subset. `RandomSampler` avoids that spatial bias, but samples with replacement and does not guarantee full coverage. Neither is a perfect online substitute for offline full-grid extraction.
 
-The paper normalizes all WSIs to 0.5 µm/px with pyvips before tiling. wsistream instead selects the closest existing pyramid level via `target_mpp`, which avoids a full-slide resize but means the effective resolution may not be exactly 0.5 µm/px.
+The paper normalizes all WSIs to 0.5 µm/px with pyvips before tiling. wsistream reaches 0.5 µm/px per patch instead: `target_mpp` reads the matching pyramid level, or shrinks a larger region read from a finer level, which avoids a full-slide resize.
 
 ```python
 from wsistream.pipeline import PatchPipeline
@@ -84,7 +84,7 @@ pipeline = PatchPipeline(
 |------|-------|-----------|-------|
 | Tissue detection | Otsu on luminance (RGB channel mean) via `skimage.filters.threshold_otsu` | `OtsuTissueDetector` (Otsu on weighted grayscale via `cv2.cvtColor`) | **Approximate** — both are Otsu-based, but the grayscale conversion differs (simple RGB mean vs. weighted 0.299R+0.587G+0.114B) |
 | Tissue threshold | 10% occupancy | `tissue_threshold=0.1` | Exact |
-| Resolution normalization | pyvips resize of entire WSI to 0.5 µm/px before tiling | `target_mpp=0.5` selects closest pyramid level | **Approximate** — wsistream reads from the nearest existing level rather than resampling the full slide |
+| Resolution normalization | pyvips resize of entire WSI to 0.5 µm/px before tiling | `target_mpp=0.5` resamples each patch from a finer level when no level matches | **Approximate** — per-patch area interpolation instead of a whole-slide pyvips resize |
 | Tile size | 256×256 | `patch_size=256` | Exact |
 | Extraction | Offline, all non-overlapping tiles | Online random sampling (with replacement) | **Different** — random sampling does not guarantee full coverage |
 | Normalization | ImageNet mean/std | Training code | Exact (not part of wsistream) |

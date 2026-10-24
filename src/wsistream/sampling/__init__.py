@@ -5,6 +5,7 @@ from wsistream.sampling.base import (
     MultiLevelCoordinatePool,
     PatchSampler,
     enumerate_grid_coordinates,
+    resolve_mpp_read,
 )
 from wsistream.sampling.continuous_magnification import ContinuousMagnificationSampler
 from wsistream.sampling.grid import GridSampler
@@ -20,4 +21,5 @@ __all__ = [
     "CoordinatePool",
     "MultiLevelCoordinatePool",
     "enumerate_grid_coordinates",
+    "resolve_mpp_read",
 ]

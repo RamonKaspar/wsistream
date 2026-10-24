@@ -22,8 +22,9 @@ ViewConfig(
 | `transforms` | `None` | Per-view augmentation chain applied after optional cropping. `None` means the view receives the shared-transformed patch (or the raw patch if no `shared_transforms`) without further augmentation. |
 | `crop` | `None` | `RandomResizedCrop` applied before `transforms`. `None` means no spatial crop — the full patch is used. |
 | `count` | `1` | Number of independent views generated from this config. `count=1` keeps the name as-is; `count > 1` produces `name_0`, `name_1`, … with independent crop and transform draws. |
-| `mpp_override` | `None` | Target MPP for a same-center slide re-read. Requires slide MPP metadata; cannot be combined with `shared_transforms`. |
-| `patch_size_override` | `None` | Pixels to request from the slide for an `mpp_override` re-read. Requires `mpp_override`. When `None`, the primary sampler's `patch_size` is reused. |
+| `mpp_override` | `None` | Target MPP for a same-center slide re-read, resolved like `RandomSampler(target_mpp=...)`. Requires slide MPP metadata; cannot be combined with `shared_transforms`. |
+| `patch_size_override` | `None` | Side length in pixels of the `mpp_override` view. Requires `mpp_override`. When `None`, the view matches the primary patch's side length. |
+| `mpp_tolerance` | `0.1` | Maximum relative deviation between a pyramid level's mpp and `mpp_override` for reading that level directly. |
 
 ## RandomResizedCrop
 
@@ -210,7 +211,7 @@ pipeline = PatchPipeline(
         ViewConfig(
             name="context",
             mpp_override=2.0,          # read a lower-magnification context patch
-            patch_size_override=256,   # number of pixels to request at that level
+            patch_size_override=256,   # side length of the context view in pixels
             transforms=ComposeTransforms([
                 HEDColorAugmentation(sigma=0.05),
             ]),
@@ -219,7 +220,7 @@ pipeline = PatchPipeline(
 )
 ```
 
-`mpp_override` requires slide MPP metadata, like `RandomSampler(target_mpp=...)` and `MultiMagnificationSampler`.
+`mpp_override` requires slide MPP metadata, like `RandomSampler(target_mpp=...)` and `MultiMagnificationSampler`, and is resolved the same way: the view is read at the pyramid level within `mpp_tolerance` (default 10%) of the target, or from a finer level and shrunk to the view's side length. On a 40x TCGA slide, whose levels are about 0.25, 1.0, and 4.0 µm/px, the 2.0 µm/px context view above is read as a region of about 512 px at the 1.0 µm/px level and shrunk to 256 px.
 
 ## PyTorch batches
 

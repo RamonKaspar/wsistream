@@ -20,16 +20,17 @@ sampler = RandomSampler(
     patch_size=256,          # width/height at the target level
     num_patches=100,         # patches per slide (-1 for infinite streaming)
     level=0,                 # pyramid level (ignored when target_mpp is set)
-    target_mpp=None,         # desired um/px (picks the closest pyramid level per slide)
+    target_mpp=None,         # desired um/px (resampled when no pyramid level matches)
     tissue_threshold=0.4,    # minimum tissue fraction to accept a candidate
     max_retries=50,          # rejection attempts before giving up on one patch
     seed=42,                 # random seed
+    mpp_tolerance=0.1,       # relative mpp deviation that still reads a level directly
 )
 ```
 
 Set `num_patches=-1` for infinite streaming during training. The sampler will keep yielding patches indefinitely; use `patches_per_slide` in the pipeline to control how many are extracted from each slide.
 
-When `target_mpp` is set, the sampler calls `SlideHandle.best_level_for_mpp()` to find the pyramid level closest to the desired microns-per-pixel for each slide, ignoring the `level` parameter. This is useful when slides come from different scanners with different native magnifications.
+When `target_mpp` is set, the `level` parameter is ignored and every patch has the requested physical resolution, whatever the slide's native magnification. A pyramid level within `mpp_tolerance` (default 10%) of the target is read directly, so a 0.2485 µm/px scan serves a 0.25 µm/px target as is. When no level is that close, for example 0.5 µm/px on a 40x TCGA slide whose levels are about 0.25, 1.0, and 4.0 µm/px, a proportionally larger region is read from the coarsest finer level and the pipeline shrinks it to `patch_size` with area interpolation. The coordinate then records the read size in `patch_size` and the effective resolution in `mpp`. A target finer than the scan, such as 0.25 µm/px on a 20x slide, is read at the native level 0, because enlarging cannot add detail. Set `mpp_tolerance=float("inf")` to always read the closest pyramid level directly instead.
 
 RandomSampler supports `replacement="without_replacement"` in the pipeline. See [Without-replacement sampling](#without-replacement-sampling) below.
 
@@ -52,7 +53,7 @@ GridSampler is deterministic and exhaustive -- it visits every grid position. Th
 
 ## MultiMagnificationSampler
 
-Randomly selects a pyramid level, then samples a random patch at that level. Midnight trains at 0.25, 0.5, 1.0, and 2.0 um/px ([Karasikov et al., 2025](https://arxiv.org/abs/2504.05186)). Each iteration picks one level at random.
+Randomly selects a target magnification, then samples a random patch at it. Midnight trains at 0.25, 0.5, 1.0, and 2.0 um/px ([Karasikov et al., 2025](https://arxiv.org/abs/2504.05186)). Each iteration picks one target at random and reads it like `RandomSampler(target_mpp=...)`: a matching pyramid level is read directly, and a missing one is read from a finer level and shrunk to `patch_size`.
 
 ```python
 from wsistream.sampling import MultiMagnificationSampler
@@ -65,6 +66,7 @@ sampler = MultiMagnificationSampler(
     tissue_threshold=0.4,
     max_consecutive_failures=100,         # stop after this many consecutive failures
     seed=42,
+    mpp_tolerance=0.1,                    # relative mpp deviation that still reads a level directly
 )
 ```
 
@@ -109,7 +111,7 @@ sampler = ContinuousMagnificationSampler(
 | `"minmax"` | LP-optimised to maximise worst-case quality; oversamples boundary magnifications. Requires `scipy`. | Robust representations at all magnifications |
 
 !!! note "Automatic resize"
-    Unlike other samplers, `ContinuousMagnificationSampler` reads variable-sized crops and the pipeline **automatically resizes** them to `output_size`. You do **not** need to add a `ResizeTransform` to your transform chain. Crops larger than `output_size` are shrunk with area interpolation, which averages every source pixel instead of aliasing fine structure; crops smaller than `output_size` (a target finer than the slide's native resolution) are enlarged bilinearly.
+    `ContinuousMagnificationSampler` reads variable-sized crops and the pipeline **automatically resizes** them to `output_size`. You do **not** need to add a `ResizeTransform` to your transform chain. Crops larger than `output_size` are shrunk with area interpolation, which averages every source pixel instead of aliasing fine structure; crops smaller than `output_size` (a target finer than the slide's native resolution) are enlarged bilinearly.
 
 !!! note "MPP metadata"
     Continuous magnification sampling requires that the slide file contains microns-per-pixel (MPP) metadata. If MPP is unavailable, the sampler falls back to single-level (level 0) sampling with a `RandomSampler`, using `output_size` as `patch_size`.
@@ -135,7 +137,7 @@ pipeline = PatchPipeline(
 | Sampler | Supported | Notes |
 |---|---|---|
 | `RandomSampler` | Yes | Single-level pool at the resolved pyramid level |
-| `MultiMagnificationSampler` | Yes | Per-level pools with weighted level selection |
+| `MultiMagnificationSampler` | Yes | Per-magnification pools with weighted selection |
 | `GridSampler` | No | Already deterministic and exhaustive |
 | `ContinuousMagnificationSampler` | No | Continuous magnification range is not discretisable into a finite pool |
 

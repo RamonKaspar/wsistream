@@ -109,7 +109,7 @@ sampler = ContinuousMagnificationSampler(
 | `"minmax"` | LP-optimised to maximise worst-case quality; oversamples boundary magnifications. Requires `scipy`. | Robust representations at all magnifications |
 
 !!! note "Automatic resize"
-    Unlike other samplers, `ContinuousMagnificationSampler` reads variable-sized crops and the pipeline **automatically resizes** them to `output_size`. You do **not** need to add a `ResizeTransform` to your transform chain.
+    Unlike other samplers, `ContinuousMagnificationSampler` reads variable-sized crops and the pipeline **automatically resizes** them to `output_size`. You do **not** need to add a `ResizeTransform` to your transform chain. Crops larger than `output_size` are shrunk with area interpolation, which averages every source pixel instead of aliasing fine structure; crops smaller than `output_size` (a target finer than the slide's native resolution) are enlarged bilinearly.
 
 !!! note "MPP metadata"
     Continuous magnification sampling requires that the slide file contains microns-per-pixel (MPP) metadata. If MPP is unavailable, the sampler falls back to single-level (level 0) sampling with a `RandomSampler`, using `output_size` as `patch_size`.

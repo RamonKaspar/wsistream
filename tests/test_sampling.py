@@ -9,7 +9,7 @@ import pytest
 
 from wsistream.sampling.grid import GridSampler
 from wsistream.sampling.multi_magnification import MultiMagnificationSampler
-from wsistream.sampling.random import RandomSampler
+from wsistream.sampling.random import RandomSampler, _TissuePositions
 from wsistream.slide import SlideHandle
 from wsistream.types import TissueMask
 
@@ -254,6 +254,82 @@ class TestRandomSampler:
         for c in coords:
             assert c.level == 0  # best_level_for_mpp returns 0 when mpp is None
         slide.close()
+
+    def test_low_tissue_slide_yields_every_patch(self, fake_slide):
+        """A slide with little tissue must not end early when rejection sampling misses."""
+        mask = np.zeros((100, 100), dtype=bool)
+        mask[10:14, 70:74] = True  # 0.16% of the slide
+        tissue_mask = TissueMask(mask=mask, downsample=40.96, slide_dimensions=(4096, 4096))
+        sampler = RandomSampler(patch_size=64, num_patches=200, max_retries=1, seed=42)
+
+        coords = list(sampler.sample(fake_slide, tissue_mask))
+
+        assert len(coords) == 200
+        for c in coords:
+            assert tissue_mask.contains_tissue(c.x, c.y, 64, 64, 0.4)
+
+    def test_fallback_keeps_the_rejection_sampling_distribution(self, fake_slide):
+        """Patches split between two tissue regions in proportion to their accepted area."""
+        mask = np.zeros((100, 100), dtype=bool)
+        mask[10:20, 10:20] = True
+        mask[60:90, 60:90] = True  # 9x the area of the first region
+        tissue_mask = TissueMask(mask=mask, downsample=40.96, slide_dimensions=(4096, 4096))
+
+        def fraction_in_small_region(max_retries):
+            sampler = RandomSampler(
+                patch_size=64, num_patches=4000, max_retries=max_retries, seed=42
+            )
+            coords = list(sampler.sample(fake_slide, tissue_mask))
+            assert len(coords) == 4000
+            return np.mean([c.x < 2048 for c in coords])
+
+        # max_retries=1 draws most patches through the fallback, 10_000 none.
+        assert fraction_in_small_region(1) == pytest.approx(
+            fraction_in_small_region(10_000), abs=0.02
+        )
+
+
+class _IndexRng:
+    """Stand-in generator whose ``integers`` returns a fixed value."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def integers(self, low: int, high: int) -> int:
+        return self.value
+
+
+class TestTissuePositions:
+    def test_draws_are_a_bijection_onto_accepted_positions(self):
+        """Every random index maps to a distinct position that rejection sampling accepts."""
+        rng = np.random.default_rng(0)
+        # Non-integer downsample and a slide wider than the mask exercise edge clamping.
+        tissue_mask = TissueMask(
+            mask=rng.random((15, 20)) < 0.4, downsample=7.3, slide_dimensions=(150, 110)
+        )
+        footprint = 40
+        max_x, max_y = 150 - footprint, 110 - footprint
+        accepted = {
+            (x, y)
+            for x in range(max_x + 1)
+            for y in range(max_y + 1)
+            if tissue_mask.contains_tissue(x, y, footprint, footprint, 0.4)
+        }
+        positions = _TissuePositions(tissue_mask, max_x, max_y, footprint, 0.4)
+
+        drawn = [positions.sample(_IndexRng(i)) for i in range(len(accepted))]
+
+        assert accepted
+        assert not positions.empty
+        assert int(positions._cumulative[-1]) == len(accepted)
+        assert len(set(drawn)) == len(accepted)
+        assert set(drawn) == accepted
+
+    def test_no_accepted_position_is_empty(self):
+        tissue_mask = TissueMask(
+            mask=np.zeros((10, 10), dtype=bool), downsample=10.0, slide_dimensions=(100, 100)
+        )
+        assert _TissuePositions(tissue_mask, 50, 50, 50, 0.4).empty
 
 
 # ── GridSampler ──

@@ -11,7 +11,7 @@ Samplers only propose coordinates based on the tissue mask (a coarse thumbnail-l
 
 ## RandomSampler
 
-Uniform random sampling via rejection: draw random (x, y) from the slide bounds, check against the tissue mask, reject if below the tissue threshold, yield if above. This is the core online patching approach, proposed for FM pre-training by Kaiko ([Aben et al., 2024](https://arxiv.org/abs/2404.15217)).
+Uniform random sampling via rejection: draw random (x, y) from the slide bounds, check against the tissue mask, reject if below the tissue threshold, yield if above. This is the core online patching approach, proposed for FM pre-training by Kaiko ([Aben et al., 2024](https://arxiv.org/abs/2404.15217)). When `max_retries` draws in a row are rejected, which happens on slides with little tissue, the patch is drawn directly from the exact set of positions that pass the threshold instead. Both methods sample those positions uniformly, so the distribution is unchanged and a slide yields every patch as long as it has any accepted position.
 
 ```python
 from wsistream.sampling import RandomSampler
@@ -22,7 +22,7 @@ sampler = RandomSampler(
     level=0,                 # pyramid level (ignored when target_mpp is set)
     target_mpp=None,         # desired um/px (picks the closest pyramid level per slide)
     tissue_threshold=0.4,    # minimum tissue fraction to accept a candidate
-    max_retries=50,          # rejection attempts before giving up on one patch
+    max_retries=50,          # rejection attempts before exact sampling from the mask
     seed=42,                 # random seed
 )
 ```

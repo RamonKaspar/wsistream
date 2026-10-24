@@ -114,6 +114,34 @@ class TestPatchesPerSlideCap:
         assert max_from_one <= cap, f"Slide exceeded cap: got {max_from_one}, limit is {cap}"
 
 
+class TestLowTissueSlides:
+    """RandomSampler must deliver its full budget on slides with little tissue."""
+
+    def test_every_slide_yields_its_full_budget(self, slides, make_backend):
+        from wsistream.slide import SlideHandle
+        from wsistream.types import TissueMask
+
+        for slide_path in slides:
+            with SlideHandle(slide_path, backend=make_backend()) as slide:
+                thumbnail = slide.get_thumbnail((2048, 2048))
+                th, tw = thumbnail.shape[:2]
+                sw, sh = slide.properties.dimensions
+                tissue_mask = TissueMask(
+                    mask=OtsuTissueDetector().detect(thumbnail),
+                    downsample=max(sw / tw, sh / th),
+                    slide_dimensions=(sw, sh),
+                )
+                sampler = RandomSampler(patch_size=256, num_patches=500, seed=42)
+                coords = list(sampler.sample(slide, tissue_mask))
+
+            if not (tissue_mask.tissue_fraction_grid(256, 256) >= 0.4).any():
+                assert coords == [], slide_path
+                continue
+            assert len(coords) == 500, slide_path
+            for c in coords:
+                assert tissue_mask.contains_tissue(c.x, c.y, 256, 256, 0.4)
+
+
 class TestCycleMode:
     """cycle=True must produce more patches than a single pass."""
 

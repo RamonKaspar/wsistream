@@ -101,6 +101,30 @@ class TissueMask:
             return 0.0
         return float(region.mean())
 
+    def tissue_fraction_grid(self, width: int, height: int) -> np.ndarray:
+        """Tissue fraction of a ``width x height`` footprint anchored in every mask cell.
+
+        :meth:`tissue_fraction_at` depends on a level-0 position only through
+        the mask cell that contains it. Entry ``[my, mx]`` of the returned
+        ``(H, W)`` array equals ``tissue_fraction_at(x, y, width, height)`` for
+        every position whose top-left corner falls in cell ``(mx, my)``, with
+        positions past the mask edge assigned to the last cell, as there.
+        """
+        ds = self.downsample
+        mw, mh = max(1, int(width / ds)), max(1, int(height / ds))
+        h_mask, w_mask = self.mask.shape
+        x1, y1 = np.arange(w_mask), np.arange(h_mask)
+        x2, y2 = np.minimum(x1 + mw, w_mask), np.minimum(y1 + mh, h_mask)
+
+        # Box sums from cumulative sums, one axis at a time.
+        cumulative = np.zeros((h_mask, w_mask + 1), dtype=np.int64)
+        np.cumsum(self.mask, axis=1, dtype=np.int64, out=cumulative[:, 1:])
+        row_sums = cumulative[:, x2] - cumulative[:, x1]
+        cumulative = np.zeros((h_mask + 1, w_mask), dtype=np.int64)
+        np.cumsum(row_sums, axis=0, out=cumulative[1:])
+        sums = cumulative[y2] - cumulative[y1]
+        return sums / np.outer(y2 - y1, x2 - x1)
+
 
 @dataclass(frozen=True)
 class PatchCoordinate:

@@ -72,6 +72,20 @@ class TestTissueMask:
         frac = tm.tissue_fraction_at(8, 8, 100, 100)
         assert 0.0 < frac <= 1.0
 
+    @pytest.mark.parametrize("dtype", [bool, np.uint8])
+    def test_tissue_fraction_grid_matches_tissue_fraction_at(self, dtype):
+        rng = np.random.default_rng(0)
+        mask = (rng.random((12, 17)) < 0.4).astype(dtype)
+        tm = TissueMask(mask=mask, downsample=6.7, slide_dimensions=(120, 85))
+        for width, height in [(1, 1), (30, 45), (200, 200)]:
+            grid = tm.tissue_fraction_grid(width, height)
+            assert grid.shape == mask.shape
+            # Include positions past the mask edge, which clamp to the last cell.
+            for x in range(0, 130):
+                for y in range(0, 95):
+                    cx, cy = min(int(x / 6.7), 16), min(int(y / 6.7), 11)
+                    assert grid[cy, cx] == tm.tissue_fraction_at(x, y, width, height)
+
 
 class TestSlideProperties:
     def test_mpp_at_level(self, sample_properties):

@@ -282,6 +282,36 @@ class TestFullMidnightPipeline:
         pytest.fail("No slide metadata was parsed successfully.")
 
 
+class TestCoordinatePools:
+    """Grid enumeration must match a position-by-position tissue check on real masks."""
+
+    def test_grid_matches_position_by_position_scan(self, slides, make_backend):
+        from wsistream.sampling import enumerate_grid_coordinates
+        from wsistream.slide import SlideHandle
+        from wsistream.types import TissueMask
+
+        for slide_path in slides:
+            with SlideHandle(slide_path, backend=make_backend()) as slide:
+                thumbnail = slide.get_thumbnail((2048, 2048))
+                th, tw = thumbnail.shape[:2]
+                sw, sh = slide.properties.dimensions
+                tissue_mask = TissueMask(
+                    mask=OtsuTissueDetector().detect(thumbnail),
+                    downsample=max(sw / tw, sh / th),
+                    slide_dimensions=(sw, sh),
+                )
+                for level in range(min(2, slide.properties.level_count)):
+                    patch_l0 = int(256 * slide.properties.level_downsamples[level])
+                    expected = [
+                        (x, y)
+                        for y in range(0, sh - patch_l0 + 1, patch_l0)
+                        for x in range(0, sw - patch_l0 + 1, patch_l0)
+                        if tissue_mask.contains_tissue(x, y, patch_l0, patch_l0, 0.4)
+                    ]
+                    coords = enumerate_grid_coordinates(slide, tissue_mask, level, 256, 0.4)
+                    assert [(c.x, c.y) for c in coords] == expected, (slide_path, level)
+
+
 class TestPatchFilter:
     """Per-tile filtering with HSVPatchFilter."""
 

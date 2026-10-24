@@ -197,6 +197,50 @@ class TestMultiLevelCoordinatePool:
         assert pool.pop(np.random.default_rng(0)) is None
 
 
+# ── enumerate_grid_coordinates ──
+
+
+def _scan_grid(slide, tissue_mask, level, patch_size, tissue_threshold):
+    """Reference: check every grid position with TissueMask.contains_tissue."""
+    props = slide.properties
+    patch_l0 = int(patch_size * props.level_downsamples[level])
+    return [
+        (x, y)
+        for y in range(0, props.height - patch_l0 + 1, patch_l0)
+        for x in range(0, props.width - patch_l0 + 1, patch_l0)
+        if tissue_mask.contains_tissue(x, y, patch_l0, patch_l0, tissue_threshold)
+    ]
+
+
+class TestEnumerateGridCoordinates:
+    @pytest.mark.parametrize("seed", range(5))
+    def test_matches_a_position_by_position_scan(self, fake_slide, seed):
+        rng = np.random.default_rng(seed)
+        # Non-integer downsample, and masks slightly smaller or larger than the slide.
+        downsample = float(rng.uniform(90, 110))
+        shape = tuple(int(4096 / downsample) + int(rng.integers(-2, 3)) for _ in range(2))
+        tissue_mask = TissueMask(
+            mask=rng.random(shape) < rng.uniform(0.2, 0.8),
+            downsample=downsample,
+            slide_dimensions=(4096, 4096),
+        )
+        for level in range(3):
+            for patch_size in (64, 100, 256):
+                for threshold in (0.1, 0.4, 0.9):
+                    coords = enumerate_grid_coordinates(
+                        fake_slide, tissue_mask, level, patch_size, threshold
+                    )
+                    assert [(c.x, c.y) for c in coords] == _scan_grid(
+                        fake_slide, tissue_mask, level, patch_size, threshold
+                    )
+                    for c in coords:
+                        assert (c.level, c.patch_size) == (level, patch_size)
+                        assert c.mpp == fake_slide.properties.mpp_at_level(level)
+
+    def test_patch_larger_than_slide_yields_nothing(self, fake_slide, full_tissue_mask):
+        assert enumerate_grid_coordinates(fake_slide, full_tissue_mask, 2, 2048, 0.4) == []
+
+
 # ── RandomSampler.build_coordinate_pool ──
 
 

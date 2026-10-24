@@ -86,6 +86,16 @@ class TestTissueMask:
                     cx, cy = min(int(x / 6.7), 16), min(int(y / 6.7), 11)
                     assert grid[cy, cx] == tm.tissue_fraction_at(x, y, width, height)
 
+    def test_tissue_fraction_grid_restricted_to_cells(self):
+        rng = np.random.default_rng(1)
+        tm = TissueMask(mask=rng.random((12, 17)) < 0.4, downsample=6.7, slide_dimensions=(120, 85))
+        cells_x, cells_y = np.array([0, 3, 16]), np.array([2, 11])
+
+        np.testing.assert_array_equal(
+            tm.tissue_fraction_grid(30, 45, cells_x, cells_y),
+            tm.tissue_fraction_grid(30, 45)[np.ix_(cells_y, cells_x)],
+        )
+
 
 class TestSlideProperties:
     def test_mpp_at_level(self, sample_properties):

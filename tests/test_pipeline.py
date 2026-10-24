@@ -565,6 +565,60 @@ class TestCycleMode:
         # Without duplicate guard, pool_size=8 would open 8 copies immediately.
         assert pipeline.stats.slides_processed <= count // 5 + 2
 
+    @staticmethod
+    def _handle_tracking_backend() -> tuple[FakeBackend, Counter]:
+        """Backend recording the most handles each slide had open at the same time."""
+        open_handles: Counter = Counter()
+        max_handles: Counter = Counter()
+
+        class _TrackHandles(FakeBackend):
+            def open(self, path: str) -> None:
+                super().open(path)
+                open_handles[path] += 1
+                max_handles[path] = max(max_handles[path], open_handles[path])
+
+            def close(self) -> None:
+                open_handles[self._path] -= 1
+                super().close()
+
+        return _TrackHandles(), max_handles
+
+    def test_cycle_never_holds_two_handles_to_one_slide(self):
+        """A slide still open when the queue refills must not be opened again."""
+        backend, max_handles = self._handle_tracking_backend()
+        pipeline = _make_pipeline(
+            n_slides=3,
+            patches_per_slide=5,
+            pool_size=8,
+            cycle=True,
+            backend=backend,
+            slide_sampling="random",
+            seed=0,
+        )
+
+        iterator = iter(pipeline)
+        for _ in range(300):
+            next(iterator)
+
+        assert set(max_handles.values()) == {1}
+
+    def test_duplicate_paths_are_read_one_after_another(self):
+        backend, max_handles = self._handle_tracking_backend()
+        paths = fake_slide_paths(2)
+        pipeline = PatchPipeline(
+            slide_paths=[paths[0], paths[0], paths[1]],
+            backend=backend,
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
+            pool_size=3,
+            patches_per_slide=5,
+        )
+
+        counts = Counter(result.coordinate.slide_path for result in pipeline)
+
+        assert counts == {paths[0]: 10, paths[1]: 5}
+        assert set(max_handles.values()) == {1}
+
     def test_cycle_false_stops_after_one_pass(self):
         pipeline = _make_pipeline(n_slides=3, patches_per_slide=5, cycle=False)
         patches = list(pipeline)

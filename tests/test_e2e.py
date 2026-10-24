@@ -91,6 +91,43 @@ class TestSlideInterleaving:
         assert len(first_10) >= 2, f"First 10 patches all from same slide(s): {first_10}"
 
 
+class TestUniqueOpenSlides:
+    """Cycle mode must never hold two handles to the same real slide."""
+
+    def test_pool_larger_than_corpus(self, slides, make_backend):
+        open_handles: Counter = Counter()
+        max_handles: Counter = Counter()
+
+        class _TrackHandles(type(make_backend())):
+            def open(self, path: str) -> None:
+                super().open(path)
+                open_handles[path] += 1
+                max_handles[path] = max(max_handles[path], open_handles[path])
+
+            def close(self) -> None:
+                if self._slide is not None:
+                    open_handles[self._path] -= 1
+                super().close()
+
+        pipeline = PatchPipeline(
+            slide_paths=slides[:3],
+            backend=_TrackHandles(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=64, num_patches=-1, level=1, seed=42),
+            pool_size=8,
+            patches_per_slide=5,
+            slide_sampling="random",
+            cycle=True,
+            tissue_mask_cache_size=8,
+            seed=0,
+        )
+        iterator = iter(pipeline)
+        for _ in range(200):
+            next(iterator)
+
+        assert set(max_handles.values()) == {1}
+
+
 class TestPatchesPerSlideCap:
     """No single slide should exceed patches_per_slide."""
 

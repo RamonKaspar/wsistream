@@ -72,7 +72,10 @@ class _RandomOffsetTransform(PatchTransform):
         self._rng = np.random.default_rng(seed)
 
     def __call__(self, image: np.ndarray) -> np.ndarray:
-        delta = int(self._rng.integers(1, 8))
+        # FakeBackend patches are constant, so the offset alone sets the checksum.
+        # Draw from 127 offsets so that two independent RNG streams share their
+        # first two offsets with probability 1/127² ≈ 6e-5 (1/7² ≈ 2% with 1..7).
+        delta = int(self._rng.integers(1, 128))
         out = np.clip(image.astype(np.int16) + delta, 0, 255)
         return out.astype(np.uint8)
 

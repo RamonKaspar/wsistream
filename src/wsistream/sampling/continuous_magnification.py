@@ -185,6 +185,8 @@ class ContinuousMagnificationSampler(PatchSampler):
             raise ValueError(f"lambda_maxavg must be > 0, got {self.lambda_maxavg}")
         if self.num_patches < -1 or self.num_patches == 0:
             raise ValueError(f"num_patches must be -1 (infinite) or >= 1, got {self.num_patches}")
+        if not 0 <= self.tissue_threshold <= 1:
+            raise ValueError(f"tissue_threshold must be in [0, 1], got {self.tissue_threshold}")
         if self.max_retries < 1:
             raise ValueError(f"max_retries must be >= 1, got {self.max_retries}")
         if self.max_consecutive_failures < 1:

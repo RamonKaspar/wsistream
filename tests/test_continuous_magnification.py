@@ -211,6 +211,11 @@ class TestValidation:
         with pytest.raises(ValueError, match="max_consecutive_failures"):
             ContinuousMagnificationSampler(max_consecutive_failures=0)
 
+    @pytest.mark.parametrize("threshold", [-0.1, 1.5, float("nan")])
+    def test_invalid_tissue_threshold(self, threshold):
+        with pytest.raises(ValueError, match="tissue_threshold must be in"):
+            ContinuousMagnificationSampler(tissue_threshold=threshold)
+
 
 # ---------------------------------------------------------------------------
 # Sampling behaviour

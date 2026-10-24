@@ -28,6 +28,12 @@ class TestRandomFlipRotate:
         out = RandomFlipRotate(p_hflip=1.0, p_vflip=0, p_rot90=0)(random_patch)
         np.testing.assert_array_equal(out, np.flip(random_patch, axis=1))
 
+    @pytest.mark.parametrize("name", ["p_hflip", "p_vflip", "p_rot90"])
+    @pytest.mark.parametrize("probability", [-0.1, 1.5, float("nan")])
+    def test_probability_outside_unit_interval_raises(self, name, probability):
+        with pytest.raises(ValueError, match=f"{name} must be in"):
+            RandomFlipRotate(**{name: probability})
+
 
 class TestResizeTransform:
     def test_resizes(self, random_patch_256):
@@ -296,6 +302,14 @@ class TestHEDColorAugmentation:
                 HEDColorAugmentation(sigma=val)
             with pytest.raises(ValueError, match="sigma_bias must be"):
                 HEDColorAugmentation(sigma_bias=val)
+
+    def test_rejects_normalized_input(self):
+        """HED after NormalizeTransform used to return garbage instead of failing."""
+        image = np.full((8, 8, 3), 200, dtype=np.uint8)
+        normalized = NormalizeTransform(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))(image)
+
+        with pytest.raises(ValueError, match="expects a uint8 RGB image, got dtype float32"):
+            HEDColorAugmentation()(normalized)
 
     def test_positional_arg_compatibility(self):
         """HEDColorAugmentation(0.05, 42) must set seed=42, not sigma_bias=42."""

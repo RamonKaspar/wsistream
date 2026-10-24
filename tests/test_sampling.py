@@ -394,3 +394,29 @@ class TestMultiMagnificationSampler:
         )
         levels = Counter(coord.level for coord in sampler.sample(fake_slide, full_tissue_mask))
         assert levels[0] > levels[2] * 4
+
+
+# ── Parameter validation ──
+
+
+@pytest.mark.parametrize("sampler_class", [RandomSampler, GridSampler, MultiMagnificationSampler])
+class TestSamplerParameterValidation:
+    @pytest.mark.parametrize("threshold", [-0.1, 1.5, float("nan")])
+    def test_tissue_threshold_outside_unit_interval_raises(self, sampler_class, threshold):
+        with pytest.raises(ValueError, match="tissue_threshold must be in"):
+            sampler_class(tissue_threshold=threshold)
+
+    @pytest.mark.parametrize("threshold", [0.0, 1.0])
+    def test_tissue_threshold_bounds_are_accepted(self, sampler_class, threshold):
+        assert sampler_class(tissue_threshold=threshold).tissue_threshold == threshold
+
+
+class TestMultiMagnificationWeightValidation:
+    def test_negative_weight_raises(self):
+        """A negative weight used to pass construction and fail on the first draw."""
+        with pytest.raises(ValueError, match="mpp_weights must be >= 0"):
+            MultiMagnificationSampler(mpp_weights=[1.0, -0.5, 1.0, 1.0])
+
+    def test_zero_weight_is_accepted(self):
+        sampler = MultiMagnificationSampler(mpp_weights=[1.0, 0.0, 1.0, 1.0])
+        assert sampler.mpp_weights == [1.0, 0.0, 1.0, 1.0]

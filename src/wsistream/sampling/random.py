@@ -57,6 +57,8 @@ class RandomSampler(PatchSampler):
             raise ValueError(f"num_patches must be -1 (infinite) or >= 1, got {self.num_patches}")
         if self.target_mpp is not None and self.target_mpp <= 0:
             raise ValueError(f"target_mpp must be > 0, got {self.target_mpp}")
+        if not 0 <= self.tissue_threshold <= 1:
+            raise ValueError(f"tissue_threshold must be in [0, 1], got {self.tissue_threshold}")
         if self.max_retries < 1:
             raise ValueError(f"max_retries must be >= 1, got {self.max_retries}")
         self._rng = np.random.default_rng(self.seed)

@@ -28,6 +28,8 @@ class GridSampler(PatchSampler):
             raise ValueError(f"patch_size must be >= 1, got {self.patch_size}")
         if self.stride is not None and self.stride < 1:
             raise ValueError(f"stride must be >= 1 or None, got {self.stride}")
+        if not 0 <= self.tissue_threshold <= 1:
+            raise ValueError(f"tissue_threshold must be in [0, 1], got {self.tissue_threshold}")
 
     def sample(self, slide: SlideHandle, tissue_mask: TissueMask) -> Iterator[PatchCoordinate]:
         props = slide.properties

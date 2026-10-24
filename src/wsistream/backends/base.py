@@ -32,7 +32,12 @@ class SlideBackend(ABC):
 
     @abstractmethod
     def read_region(self, x: int, y: int, level: int, width: int, height: int) -> np.ndarray:
-        """Read a region as an RGB uint8 numpy array of shape (H, W, 3)."""
+        """Read a region as an RGB uint8 numpy array of shape (H, W, 3).
+
+        ``x`` and ``y`` are level-0 coordinates. Pixels outside the slide are
+        filled with the slide's background color, white unless the format
+        defines another.
+        """
         ...
 
     @abstractmethod
@@ -63,9 +68,21 @@ class SlideBackend(ABC):
         return slide
 
     @staticmethod
-    def _to_rgb_array(image: object) -> np.ndarray:
-        """Convert a backend image to a numpy array and discard an alpha channel."""
+    def _to_rgb_array(
+        image: object, background: tuple[int, int, int] = (255, 255, 255)
+    ) -> np.ndarray:
+        """Convert a backend image to a numpy array, compositing alpha over ``background``.
+
+        OpenSlide marks pixels outside the slide, and missing tiles, as
+        transparent; discarding the alpha channel would turn them black.
+        """
         arr = np.asarray(image)
         if arr.ndim == 3 and arr.shape[2] == 4:
-            arr = arr[:, :, :3]
+            rgb, alpha = arr[:, :, :3], arr[:, :, 3:]
+            if alpha.min() == 255:
+                return rgb
+            # Non-premultiplied "over" compositing in exact integer arithmetic.
+            weight = alpha.astype(np.uint16)
+            fill = np.asarray(background, dtype=np.uint16) * (255 - weight)
+            arr = ((rgb * weight + fill + 127) // 255).astype(np.uint8)
         return arr

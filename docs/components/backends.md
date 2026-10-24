@@ -67,6 +67,8 @@ level = slide.best_level_for_mpp(target_mpp=0.5)
 slide.close()
 ```
 
+Regions may extend past the slide edges. Both backends fill the pixels outside the slide with the slide's background color, white unless the format defines another, so padding never looks like dark tissue.
+
 `SlideHandle` supports context managers:
 
 ```python

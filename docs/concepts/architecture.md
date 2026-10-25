@@ -79,6 +79,10 @@ Caching is disabled by default (`tissue_mask_cache_size=0`) because reusing a ma
 
 Cache entries are invalidated automatically when the backend object, tissue-detector object, or `thumbnail_size` is replaced. If a detector or backend is mutated in place, a slide file is replaced while the pipeline is alive, or any other input to mask generation changes without replacing those objects, call `pipeline.clear_tissue_mask_cache()` before continuing; for `WsiStreamDataset`, close the active iterator and create a new one. Only successful detections are cached, cached arrays are isolated from sampler mutations, and cache contents are not serialized into worker processes.
 
+### Failure handling
+
+A failing slide never ends the stream. A slide that cannot be opened, or whose tissue detection fails, is counted in `slides_failed` and skipped; with `cycle=True` it is tried again on the next pass. A slide whose reads all fail, or whose sampler raises (for example `RandomSampler(level=2)` on a slide with two pyramid levels), is closed and never reopened. Every error is logged as a warning and kept in `pipeline.stats.recent_errors`.
+
 ## Data types
 
 The pipeline produces `PatchResult` objects. Here are the key data types:

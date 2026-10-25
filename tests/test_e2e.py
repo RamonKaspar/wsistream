@@ -391,8 +391,9 @@ class TestTargetMagnification:
                 detail = cv2.resize(result.views["detail"], (64, 64), interpolation=cv2.INTER_AREA)
                 detail_gray = cv2.cvtColor(detail, cv2.COLOR_RGB2GRAY).ravel()
                 context_gray = cv2.cvtColor(result.views["context"], cv2.COLOR_RGB2GRAY)
-                # TiffSlide floors level-0 coordinates to whole pixels of the read
-                # level, so allow the context view to be offset by one pixel.
+                # TiffSlide starts reads at whole pixels of the read level, while
+                # OpenSlide interpolates, so allow the context view to be offset by
+                # one pixel.
                 correlations.append(
                     max(
                         np.corrcoef(

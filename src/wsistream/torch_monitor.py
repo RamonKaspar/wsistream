@@ -64,8 +64,10 @@ class MonitoredLoader:
 
     Notes
     -----
-    ``loader/step_ms`` and the throughput metrics use wall-clock time. On
-    CUDA, ``loader/compute_ms`` uses events on the stream that is current
+    ``loader/step_ms`` and the throughput metrics use wall-clock time, which
+    runs without gaps from the first batch of each pass over the loader, so
+    work after ``mark_step()``, such as logging, counts toward the next step.
+    On CUDA, ``loader/compute_ms`` uses events on the stream that is current
     when the batch is yielded. CUDA work and data loading may overlap, so
     component timings are not expected to add up to ``loader/step_ms``.
     """
@@ -88,6 +90,7 @@ class MonitoredLoader:
         self._loader_iter = None
         self._step_started_at: int | None = None  # perf_counter_ns timestamp
         self._batch_yielded_at: int | None = None  # perf_counter_ns timestamp
+        self._last_step_ended_at: int | None = None  # perf_counter_ns timestamp
         self._cuda_step: tuple[torch.cuda.Event, torch.cuda.Stream] | None = None
         self._pending_cuda_events: list[tuple[torch.cuda.Event, torch.cuda.Event]] = []
 
@@ -99,6 +102,7 @@ class MonitoredLoader:
         self._loader_iter = iter(self._loader)
         self._step_started_at = None
         self._batch_yielded_at = None
+        self._last_step_ended_at = None
         self._cuda_step = None
         return self
 
@@ -181,6 +185,7 @@ class MonitoredLoader:
         self._step_count = 0
         self._step_started_at = None
         self._batch_yielded_at = None
+        self._last_step_ended_at = None
         self._cuda_step = None
         self._pending_cuda_events.clear()
 
@@ -202,12 +207,18 @@ class MonitoredLoader:
             self._lifetime.compute_ns += compute_ns
 
         step_ended_at = time.perf_counter_ns()
-        wall_ns = step_ended_at - self._step_started_at
+        # A step lasts from the end of the previous one, so the time between
+        # mark_step() and the next fetch is not lost.
+        if self._last_step_ended_at is None:
+            wall_ns = step_ended_at - self._step_started_at
+        else:
+            wall_ns = step_ended_at - self._last_step_ended_at
         self._window.wall_ns += wall_ns
         self._lifetime.wall_ns += wall_ns
         self._window.step_count += 1
         self._lifetime.step_count += 1
 
+        self._last_step_ended_at = step_ended_at
         self._step_started_at = None
         self._batch_yielded_at = None
         self._cuda_step = None
@@ -231,3 +242,6 @@ class MonitoredLoader:
         self._window.wall_ns += sync_ns
         self._lifetime.wall_ns += sync_ns
         self._pending_cuda_events.clear()
+        if self._last_step_ended_at is not None:
+            # The wait is counted here, so the next step starts after it.
+            self._last_step_ended_at = time.perf_counter_ns()

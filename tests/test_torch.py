@@ -325,6 +325,38 @@ class TestSharedStats:
         dataset.reset_stats()
         assert dataset.stats_dict()["pipeline/patches_extracted"] == 0
 
+    def test_stats_reset_during_iteration(self):
+        """After a reset, slides_unique and tissue fractions cover only later slides."""
+        paths = fake_slide_paths(2)
+
+        class _TissuePerSlide(FakeBackend):
+            def get_thumbnail(self, size):
+                thumb = np.full((size[1], size[0], 3), 240, dtype=np.uint8)
+                side = size[0] // (4 if self._path == paths[0] else 2)
+                thumb[:side, :side] = 80
+                return thumb
+
+        dataset = _make_dataset(
+            n_slides=2,
+            patches_per_slide=5,
+            backend=_TissuePerSlide(),
+            sampler=RandomSampler(patch_size=32, num_patches=-1, tissue_threshold=0.0),
+            pool_size=1,
+            cycle=True,
+        )
+        iterator = iter(dataset)
+        for _ in range(10):
+            next(iterator)  # slide 0, then slide 1
+        dataset.reset_stats()
+        for _ in range(5):
+            next(iterator)  # slide 0 again
+
+        stats = dataset.stats_dict()
+        assert stats["pipeline/patches_extracted"] == 5
+        assert stats["pipeline/slides_processed"] == 1
+        assert stats["pipeline/slides_unique"] == 1
+        assert stats["pipeline/min_tissue_fraction"] == stats["pipeline/max_tissue_fraction"]
+
     def test_stats_accumulate_across_iterations(self):
         dataset = _make_dataset(n_slides=1, patches_per_slide=5)
         list(dataset)

@@ -363,6 +363,47 @@ class TestSeedDiversity:
         second_coords = [(item["x"], item["y"]) for item in second]
         assert first_coords != second_coords
 
+    @staticmethod
+    def _epoch_coordinates(loader: DataLoader, epochs: int = 3) -> list[tuple]:
+        return [
+            tuple(
+                sorted(
+                    (path, int(x), int(y))
+                    for batch in loader
+                    for path, x, y in zip(batch["slide_path"], batch["x"], batch["y"])
+                )
+            )
+            for _ in range(epochs)
+        ]
+
+    @pytest.mark.parametrize("worker_context", mp.get_all_start_methods())
+    def test_non_persistent_workers_draw_distinct_epochs(self, worker_context):
+        """Workers receive a fresh copy of the dataset every epoch; streams must still differ."""
+        dataset = _make_dataset(n_slides=4, patches_per_slide=3, seed=42)
+        loader = DataLoader(
+            dataset,
+            batch_size=4,
+            num_workers=2,
+            multiprocessing_context=worker_context,
+        )
+
+        epochs = self._epoch_coordinates(loader)
+
+        assert len(set(epochs)) == 3
+
+    def test_non_persistent_workers_match_persistent_workers(self):
+        def epochs(persistent_workers: bool) -> list[tuple]:
+            dataset = _make_dataset(n_slides=4, patches_per_slide=3, seed=42)
+            loader = DataLoader(
+                dataset,
+                batch_size=4,
+                num_workers=2,
+                persistent_workers=persistent_workers,
+            )
+            return self._epoch_coordinates(loader)
+
+        assert epochs(persistent_workers=False) == epochs(persistent_workers=True)
+
 
 # ── Parameter validation ──
 

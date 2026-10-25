@@ -24,6 +24,9 @@ from wsistream.views import ViewConfig
 
 logger = logging.getLogger(__name__)
 
+# DataLoader workers per dataset whose iterations are counted across epochs.
+_MAX_WORKERS = 1024
+
 
 def partition_slides_by_rank(
     slide_paths: str | Path | list[str | Path],
@@ -260,6 +263,9 @@ class WsiStreamDataset(IterableDataset):
     seed : int or None
         Seed for all internal RNGs: slide-queue order, sampler, transforms,
         and crops.  Set this instead of seeds on individual components.
+        Every iteration (epoch) of the dataset draws a distinct deterministic
+        stream, with or without persistent DataLoader workers, and a new
+        dataset with the same seed replays the same sequence of streams.
         ``None`` (default) draws fresh entropy for every iteration.
     views : list[ViewConfig] or None
         Optional multi-view configuration.  Mutually exclusive with
@@ -328,6 +334,9 @@ class WsiStreamDataset(IterableDataset):
         self._tissue_mask_cache_size = tissue_mask_cache_size
         self._output_dtype = output_dtype
         self._iter_count = 0
+        # Non-persistent DataLoader workers receive a fresh copy of this dataset
+        # every epoch, so each worker's iterations are counted in shared memory.
+        self._worker_iterations = mp.get_context("spawn").Array("q", _MAX_WORKERS)
         self._shared_stats = _StatsAggregator()
 
     def stats_dict(self) -> dict:
@@ -353,8 +362,9 @@ class WsiStreamDataset(IterableDataset):
             cv2.setNumThreads(0)
             slides = self._slide_paths[worker_info.id :: worker_info.num_workers]
             # Map each (iteration, worker) pair to a distinct deterministic seed.
+            iteration = self._next_worker_iteration(worker_info.id)
             worker_seed = (
-                self._seed + self._iter_count * worker_info.num_workers + worker_info.id
+                self._seed + iteration * worker_info.num_workers + worker_info.id
                 if self._seed is not None
                 else None
             )
@@ -457,6 +467,17 @@ class WsiStreamDataset(IterableDataset):
                 self._shared_stats.push_histograms(
                     new_slides, mpp_delta, cancer_delta, sample_delta
                 )
+
+    def _next_worker_iteration(self, worker_id: int) -> int:
+        """Count one more iteration of a DataLoader worker and return the count."""
+        if worker_id >= _MAX_WORKERS:
+            raise ValueError(
+                f"WsiStreamDataset supports at most {_MAX_WORKERS} DataLoader workers, "
+                f"got worker id {worker_id}"
+            )
+        with self._worker_iterations.get_lock():
+            self._worker_iterations[worker_id] += 1
+            return self._worker_iterations[worker_id]
 
     def _flush_stats(
         self,

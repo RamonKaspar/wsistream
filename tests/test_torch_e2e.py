@@ -368,6 +368,35 @@ class TestRealWsiUint8Output:
         torch.testing.assert_close(uint8_batch.float() / 255.0, float_batch)
 
 
+@pytest.mark.e2e
+class TestRealWsiEpochs:
+    def test_non_persistent_workers_draw_new_patches_every_epoch(self, slides, make_backend):
+        dataset = WsiStreamDataset(
+            slide_paths=slides[:4],
+            backend=make_backend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=64, num_patches=-1),
+            pool_size=2,
+            patches_per_slide=4,
+            cycle=False,
+            seed=42,
+            output_dtype="uint8",
+        )
+        loader = DataLoader(dataset, batch_size=4, num_workers=2)
+
+        first, second = (
+            {
+                (path, int(x), int(y))
+                for batch in loader
+                for path, x, y in zip(batch["slide_path"], batch["x"], batch["y"])
+            }
+            for _ in range(2)
+        )
+
+        assert first and second
+        assert not first & second
+
+
 # ── helpers for DDP tests ──
 
 

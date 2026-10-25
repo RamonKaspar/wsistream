@@ -47,14 +47,19 @@ class TiffSlideBackend(SlideBackend):
 
     def read_region(self, x: int, y: int, level: int, width: int, height: int) -> np.ndarray:
         slide = self._require_open_slide(self._slide)
-        # TiffSlide pads out-of-bounds pixels with zeros. Read only the part
-        # inside the slide, from non-negative coordinates, onto a white canvas.
+        # TiffSlide truncates level-0 coordinates to whole pixels of the read
+        # level and pads out-of-bounds pixels with zeros. Start at the nearest
+        # level pixel instead, and read only the part inside the slide onto a
+        # white canvas.
         ds = slide.level_downsamples[level]
-        left = min(width, max(0, math.ceil(-x / ds)))
-        top = min(height, max(0, math.ceil(-y / ds)))
+        col = math.floor(x / ds + 0.5)
+        row = math.floor(y / ds + 0.5)
+        left = min(width, max(0, -col))
+        top = min(height, max(0, -row))
         region = self._to_rgb_array(
             slide.read_region(
-                (max(x, 0), max(y, 0)),
+                # The smallest level-0 coordinates that TiffSlide maps to that pixel.
+                (math.ceil(max(col, 0) * ds), math.ceil(max(row, 0) * ds)),
                 level,
                 (width - left, height - top),
                 as_array=True,

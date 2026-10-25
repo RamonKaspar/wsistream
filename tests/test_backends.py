@@ -219,10 +219,21 @@ class TestTiffSlidePadding:
         assert (region[1:] == 255).all() and (region[:, 2:] == 255).all()
 
     def test_partially_covered_columns_follow_the_level_grid(self):
-        """At level 1, x=-6 starts 1.5 pixels left of the slide: 2 columns are white."""
+        """At level 1, x=-6 starts 1.5 pixels left of the slide, rounded to 1 white column."""
         backend, levels = self._backend()
 
         region = backend.read_region(-6, 0, 1, 4, 3)
 
-        assert (region[:, :2] == 255).all()
-        np.testing.assert_array_equal(region[:, 2:], levels[1][0:3, 0:2])
+        assert (region[:, :1] == 255).all()
+        np.testing.assert_array_equal(region[:, 1:], levels[1][0:3, 0:3])
+
+    @pytest.mark.parametrize("downsample", [4.0, 4.0003])
+    def test_level_reads_start_at_the_nearest_level_pixel(self, downsample):
+        """TiffSlide alone would truncate x/downsample, so x=7 would start at pixel 1."""
+        backend, levels = self._backend()
+        backend._slide.level_downsamples = (1.0, downsample)
+
+        for x, col in [(4, 1), (5, 1), (7, 2), (8, 2), (11, 3)]:
+            region = backend.read_region(x, x, 1, 3, 2)
+
+            np.testing.assert_array_equal(region, levels[1][col : col + 2, col : col + 3])

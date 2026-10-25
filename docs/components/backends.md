@@ -50,6 +50,7 @@ pipeline = PatchPipeline(
 | **Format support** | Widest (SVS, NDPI, MRXS, SCN, BIF, ...) | SVS, generic TIFF, NDPI (partial) |
 | **Installation** | Needs C library | Pure Python, `pip install` only |
 | **Cloud storage** | No | Yes (S3, GCS via fsspec) |
+| **Reads at levels above 0** | Interpolated between level pixels | Start at the nearest level pixel |
 
 For TCGA data (predominantly SVS format), both work. If you need broad vendor format support, use `OpenSlideBackend`. If you need cloud storage or want to avoid C dependencies, use `TiffSlideBackend`.
 

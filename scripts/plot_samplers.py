@@ -18,7 +18,10 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from scripts._helpers import get_backend
+try:
+    from scripts._helpers import get_backend
+except ModuleNotFoundError:
+    from _helpers import get_backend
 from wsistream.types import WSI_EXTENSIONS
 
 NUM_PATCHES = 64

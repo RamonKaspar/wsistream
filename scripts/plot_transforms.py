@@ -20,7 +20,10 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from scripts._helpers import get_backend
+try:
+    from scripts._helpers import get_backend
+except ModuleNotFoundError:
+    from _helpers import get_backend
 from wsistream.types import WSI_EXTENSIONS
 
 N_PATCHES = 6  # columns: one original + transforms applied

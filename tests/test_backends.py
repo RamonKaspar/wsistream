@@ -127,6 +127,17 @@ class TestAlphaCompositing:
 
         np.testing.assert_array_equal(SlideBackend._to_rgb_array(rgba), rgba[:, :, :3])
 
+    def test_opaque_pixels_are_returned_writable_and_contiguous(self):
+        """In-place transforms must work on OpenSlide reads as on TiffSlide reads."""
+        rgba = np.random.default_rng(0).integers(0, 256, (4, 5, 4), dtype=np.uint8)
+        rgba[:, :, 3] = 255
+        rgba.flags.writeable = False  # like np.asarray of a PIL image
+
+        rgb = SlideBackend._to_rgb_array(rgba)
+
+        assert rgb.flags.writeable
+        assert rgb.flags.c_contiguous
+
     def test_transparent_pixels_become_the_background(self):
         rgba = np.zeros((4, 5, 4), dtype=np.uint8)
 

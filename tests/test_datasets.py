@@ -8,6 +8,7 @@ import pytest
 
 from wsistream.datasets import TCGAAdapter
 from wsistream.datasets.tcga import (
+    _download_one,
     download_tcga_slides,
     query_tcga_slides,
     save_manifest,
@@ -208,6 +209,37 @@ class TestDownloadTcgaSlides:
 
         paths = download_tcga_slides(manifest, output_dir=tmp_path, organize_by="flat")
         assert all(p.parent == tmp_path for p in paths)
+
+
+class TestDownloadOne:
+    _record = {"file_id": "uuid-0", "filename": "slide_0.svs", "file_size": 100}
+
+    @patch("requests.get")
+    def test_writes_complete_file(self, mock_get, tmp_path):
+        mock_get.return_value.iter_content.return_value = [b"x" * 60, b"x" * 40]
+        dest = tmp_path / "slide_0.svs"
+
+        assert _download_one(self._record, dest, chunk_size=8192) == dest
+        assert dest.read_bytes() == b"x" * 100
+        assert list(tmp_path.iterdir()) == [dest]
+
+    @patch("requests.get")
+    def test_rejects_truncated_file(self, mock_get, tmp_path):
+        """A response that ends early must fail, even when urllib3 does not raise."""
+        mock_get.return_value.iter_content.return_value = [b"x" * 60]
+
+        with pytest.raises(OSError, match="60 of 100 bytes"):
+            _download_one(self._record, tmp_path / "slide_0.svs", chunk_size=8192)
+        assert list(tmp_path.iterdir()) == []
+
+    @patch("requests.get")
+    def test_replaces_existing_file(self, mock_get, tmp_path):
+        mock_get.return_value.iter_content.return_value = [b"x" * 100]
+        dest = tmp_path / "slide_0.svs"
+        dest.write_bytes(b"x" * 60)
+
+        _download_one(self._record, dest, chunk_size=8192)
+        assert dest.read_bytes() == b"x" * 100
 
 
 class TestSaveManifest:

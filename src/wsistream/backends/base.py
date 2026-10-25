@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TypeVar
 
+import cv2
 import numpy as np
 
 from wsistream.types import SlideProperties
@@ -80,7 +81,10 @@ class SlideBackend(ABC):
         if arr.ndim == 3 and arr.shape[2] == 4:
             rgb, alpha = arr[:, :, :3], arr[:, :, 3:]
             if alpha.min() == 255:
-                return rgb
+                # A writable, contiguous copy: the view of the read-only RGBA
+                # array would fail in-place transforms, and later copies of
+                # it, e.g. into a tensor, are much slower than this one.
+                return cv2.cvtColor(arr, cv2.COLOR_RGBA2RGB)
             # Non-premultiplied "over" compositing in exact integer arithmetic.
             weight = alpha.astype(np.uint16)
             fill = np.asarray(background, dtype=np.uint16) * (255 - weight)

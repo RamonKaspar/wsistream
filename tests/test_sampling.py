@@ -515,6 +515,28 @@ class TestMultiMagnificationSampler:
         for c in sampler.sample(fake_slide, full_tissue_mask):
             assert (c.level, c.patch_size, c.mpp) == (2, 256, 1.0)
 
+    def test_low_tissue_fallback_is_built_once_per_target(self, fake_slide, monkeypatch):
+        """Each target keeps one inner sampler, so its exact fallback is built at most once."""
+        built = []
+
+        class _CountingPositions(_TissuePositions):
+            def __init__(self, *args, **kwargs):
+                built.append(1)
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr("wsistream.sampling.random._TissuePositions", _CountingPositions)
+        mask = np.zeros((100, 100), dtype=bool)
+        mask[10:14, 70:74] = True  # 0.16% of the slide
+        tissue_mask = TissueMask(mask=mask, downsample=40.96, slide_dimensions=(4096, 4096))
+        sampler = MultiMagnificationSampler(
+            target_mpps=[0.25, 0.5], patch_size=64, num_patches=100, seed=42
+        )
+
+        coords = list(sampler.sample(fake_slide, tissue_mask))
+
+        assert len(coords) == 100
+        assert len(built) <= 2
+
     def test_respects_count(self, fake_slide, full_tissue_mask):
         sampler = MultiMagnificationSampler(
             target_mpps=[0.25, 0.5],

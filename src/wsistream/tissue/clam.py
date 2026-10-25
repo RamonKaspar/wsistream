@@ -116,13 +116,13 @@ class CLAMTissueDetector(TissueDetector):
 
         # _filter_contours logic
 
-        hierarchy_1 = np.flatnonzero(hierarchy[:, 1] == -1)
+        hierarchy_1 = np.flatnonzero(hierarchy[:, 1] == -1).tolist()
         filtered = []
         all_holes = []
 
         for cont_idx in hierarchy_1:
             cont = contours[cont_idx]
-            holes = np.flatnonzero(hierarchy[:, 1] == cont_idx)
+            holes = np.flatnonzero(hierarchy[:, 1] == cont_idx).tolist()
 
             a = cv2.contourArea(cont)
             hole_areas = [cv2.contourArea(contours[hole_idx]) for hole_idx in holes]

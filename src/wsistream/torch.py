@@ -8,7 +8,7 @@ import threading
 import weakref
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Iterator, Literal, Sequence, cast
 
 import cv2
 import numpy as np
@@ -32,7 +32,7 @@ _MAX_WORKERS = 1024
 
 
 def partition_slides_by_rank(
-    slide_paths: str | Path | list[str | Path],
+    slide_paths: str | Path | Sequence[str | Path],
     rank: int | None = None,
     world_size: int | None = None,
 ) -> list[str]:
@@ -49,7 +49,7 @@ def partition_slides_by_rank(
     """
     import os
 
-    slide_paths = resolve_slide_paths(slide_paths)
+    paths = resolve_slide_paths(slide_paths)
 
     if rank is None:
         rank = int(os.environ.get("RANK", 0))
@@ -61,13 +61,13 @@ def partition_slides_by_rank(
     if rank < 0 or rank >= world_size:
         raise ValueError(f"rank must be in [0, {world_size}), got {rank}")
 
-    slides = slide_paths[rank::world_size]
+    slides = paths[rank::world_size]
     if not slides:
         raise RuntimeError(
-            f"Rank {rank} got 0 slides ({len(slide_paths)} slides / {world_size} ranks). "
+            f"Rank {rank} got 0 slides ({len(paths)} slides / {world_size} ranks). "
             f"Need at least as many slides as ranks."
         )
-    logger.info("Rank %d/%d: %d/%d slides", rank, world_size, len(slides), len(slide_paths))
+    logger.info("Rank %d/%d: %d/%d slides", rank, world_size, len(slides), len(paths))
     return slides
 
 
@@ -346,7 +346,7 @@ class WsiStreamDataset(IterableDataset):
 
     def __init__(
         self,
-        slide_paths: str | Path | list[str | Path],
+        slide_paths: str | Path | Sequence[str | Path],
         backend: SlideBackend,
         tissue_detector: TissueDetector,
         sampler: PatchSampler,
@@ -506,21 +506,9 @@ class WsiStreamDataset(IterableDataset):
             # Force-push any remaining histogram deltas (mpp from last patches)
             s = pipeline.stats
             new_slides = list(s.slides_seen - prev_slides_seen)
-            mpp_delta = {}
-            for k, v in s.magnification_counts.items():
-                d = v - prev_mpp.get(k, 0)
-                if d:
-                    mpp_delta[k] = d
-            cancer_delta = {}
-            for k, v in s.cancer_type_counts.items():
-                d = v - prev_cancer.get(k, 0)
-                if d:
-                    cancer_delta[k] = d
-            sample_delta = {}
-            for k, v in s.sample_type_counts.items():
-                d = v - prev_sample.get(k, 0)
-                if d:
-                    sample_delta[k] = d
+            mpp_delta = _counter_delta(s.magnification_counts, prev_mpp)
+            cancer_delta = _counter_delta(s.cancer_type_counts, prev_cancer)
+            sample_delta = _counter_delta(s.sample_type_counts, prev_sample)
             if new_slides or mpp_delta or cancer_delta or sample_delta:
                 self._shared_stats.push_histograms(
                     new_slides, mpp_delta, cancer_delta, sample_delta
@@ -583,21 +571,9 @@ class WsiStreamDataset(IterableDataset):
         cur_slides_total = s.slides_processed + s.slides_failed
         if cur_slides_total > prev_slides_total:
             new_slides = list(s.slides_seen - prev_slides_seen)
-            mpp_delta = {}
-            for k, v in s.magnification_counts.items():
-                d = v - prev_mpp.get(k, 0)
-                if d:
-                    mpp_delta[k] = d
-            cancer_delta = {}
-            for k, v in s.cancer_type_counts.items():
-                d = v - prev_cancer.get(k, 0)
-                if d:
-                    cancer_delta[k] = d
-            sample_delta = {}
-            for k, v in s.sample_type_counts.items():
-                d = v - prev_sample.get(k, 0)
-                if d:
-                    sample_delta[k] = d
+            mpp_delta = _counter_delta(s.magnification_counts, prev_mpp)
+            cancer_delta = _counter_delta(s.cancer_type_counts, prev_cancer)
+            sample_delta = _counter_delta(s.sample_type_counts, prev_sample)
             if new_slides or mpp_delta or cancer_delta or sample_delta:
                 self._shared_stats.push_histograms(
                     new_slides, mpp_delta, cancer_delta, sample_delta
@@ -615,7 +591,9 @@ class WsiStreamDataset(IterableDataset):
 
         # Metadata first (includes slide_path from adapter)
         meta = result.slide_metadata
-        item = meta.to_flat_dict() if meta else SlideMetadata.empty_dict()
+        item = cast(
+            "dict[str, object]", meta.to_flat_dict() if meta else SlideMetadata.empty_dict()
+        )
 
         coord_fields = {
             "x": coord.x,
@@ -654,6 +632,16 @@ class WsiStreamDataset(IterableDataset):
         if image.dtype == np.uint8:
             return tensor.float() / 255.0
         return tensor.float()
+
+
+def _counter_delta(current: dict, previous: dict) -> dict:
+    """Return the nonzero increase of each count in ``current`` since ``previous``."""
+    delta = {}
+    for key, count in current.items():
+        increase = count - previous.get(key, 0)
+        if increase:
+            delta[key] = increase
+    return delta
 
 
 # Re-export for convenience: `from wsistream.torch import MonitoredLoader`

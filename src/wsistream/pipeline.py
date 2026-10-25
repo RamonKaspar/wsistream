@@ -15,7 +15,7 @@ import os
 from collections import OrderedDict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator, TypeVar
+from typing import Iterator, Sequence, TypeVar
 
 import numpy as np
 
@@ -23,7 +23,12 @@ from wsistream._utils import resize_patch
 from wsistream.backends.base import SlideBackend
 from wsistream.datasets.base import DatasetAdapter
 from wsistream.filters.base import PatchFilter
-from wsistream.sampling.base import PatchSampler, resolve_mpp_read
+from wsistream.sampling.base import (
+    CoordinatePool,
+    MultiLevelCoordinatePool,
+    PatchSampler,
+    resolve_mpp_read,
+)
 from wsistream.sampling.random import RandomSampler
 from wsistream.slide import SlideHandle
 from wsistream.tissue.base import TissueDetector
@@ -356,7 +361,7 @@ class PatchPipeline:
         (default) disables caching.
     """
 
-    slide_paths: str | Path | list[str | Path] = field(default_factory=list)
+    slide_paths: str | Path | Sequence[str | Path] = field(default_factory=list)
     backend: SlideBackend = field(default_factory=lambda: _missing_backend())
     tissue_detector: TissueDetector = field(default_factory=OtsuTissueDetector)
     sampler: PatchSampler = field(default_factory=RandomSampler)
@@ -438,6 +443,7 @@ class PatchPipeline:
                     f"duplicate paths: {sorted(duplicates)}"
                 )
         self.slide_paths = resolved_paths
+        self._slide_paths = resolved_paths
         self.sampler = _clone_component(self.sampler, "sampler")
         if self.transforms is not None:
             self.transforms = _clone_component(self.transforms, "transforms")
@@ -450,7 +456,7 @@ class PatchPipeline:
             self.views = _clone_component(self.views, "views")
         self._stats = PipelineStats()
         self._failed_slides: set[str] = set()
-        self._coordinate_pools: dict[str, object] = {}
+        self._coordinate_pools: dict[str, CoordinatePool | MultiLevelCoordinatePool] = {}
         self._tissue_mask_cache = _TissueMaskCache(self.tissue_mask_cache_size)
         # PID is only used to detect a fork. An explicit seed must fully
         # determine every RNG stream, independent of the process running it.
@@ -812,7 +818,7 @@ class PatchPipeline:
                 if not self.cycle:
                     break
                 # Never open more concurrent copies than there are unique slides
-                if len(pool) >= len(set(self.slide_paths)):
+                if len(pool) >= len(set(self._slide_paths)):
                     break
                 slide_queue.extend(self._get_slide_order())
                 if not slide_queue:
@@ -838,7 +844,7 @@ class PatchPipeline:
                 self._stats.record_error(slide_path, str(exc))
                 logger.warning("Failed to open slide %s: %s", slide_path, exc)
                 consecutive_failures += 1
-                if consecutive_failures >= len(self.slide_paths):
+                if consecutive_failures >= len(self._slide_paths):
                     break
 
     def _open_slide(self, slide_path: str) -> _PoolEntry:
@@ -945,7 +951,7 @@ class PatchPipeline:
             self._stats.slides_failed += 1
 
     def _get_slide_order(self) -> list[str]:
-        paths = [p for p in self.slide_paths if p not in self._failed_slides]
+        paths = [p for p in self._slide_paths if p not in self._failed_slides]
         if self.slide_sampling == "random":
             indices = self._rng.permutation(len(paths))
             return [paths[i] for i in indices]

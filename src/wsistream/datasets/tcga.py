@@ -179,7 +179,7 @@ def _gdc_query(
     offset = 0
 
     while True:
-        params = {
+        params: dict[str, str | int] = {
             "filters": json.dumps(filters),
             "fields": ",".join(fields),
             "format": "JSON",

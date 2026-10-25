@@ -272,6 +272,30 @@ class TestPipelineStats:
         assert pipeline.stats.patches_extracted == 0
         assert pipeline.stats.tissue_fractions.count == 0
 
+    def test_reset_stats_keeps_failed_slides_closed(self):
+        """Resetting the counters must not change which slides are streamed."""
+        paths = fake_slide_paths(3)
+        sample_calls = Counter()
+
+        class _FailOnSlide1(RandomSampler):
+            def sample(self, slide, tissue_mask):
+                sample_calls[slide.properties.path] += 1
+                if slide.properties.path == paths[1]:
+                    raise ValueError("level=3 is out of range for slide with 3 levels")
+                yield from super().sample(slide, tissue_mask)
+
+        pipeline = _make_pipeline(
+            n_slides=3,
+            patches_per_slide=2,
+            sampler=_FailOnSlide1(patch_size=256, num_patches=-1, seed=42),
+            cycle=True,
+        )
+        iterator = iter(pipeline)
+        for _ in range(10):
+            next(iterator)
+            pipeline.reset_stats()
+        assert sample_calls[paths[1]] == 1
+
     def test_mpp_none_in_dict(self):
         stats = PipelineStats()
         stats.magnification_counts = {None: 10}

@@ -10,6 +10,13 @@ import numpy as np
 
 def infer_batch_size(batch: Any) -> int:
     """Infer batch size from the first tensor-like field."""
+    if isinstance(batch, (list, tuple)) and batch:
+        # A batch like (images, labels) has the size of its first tensor; a
+        # list of samples, e.g. from collate_fn=list, has its own length.
+        try:
+            return int(batch[0].shape[0])
+        except (AttributeError, IndexError):
+            return len(batch)
     if isinstance(batch, dict):
         if "image" in batch:
             try:

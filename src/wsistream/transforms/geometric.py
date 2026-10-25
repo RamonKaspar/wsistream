@@ -4,9 +4,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 
 from wsistream.transforms.base import PatchTransform
+
+# np.rot90(image, k) rotates counterclockwise.
+_ROTATIONS = {
+    1: cv2.ROTATE_90_COUNTERCLOCKWISE,
+    2: cv2.ROTATE_180,
+    3: cv2.ROTATE_90_CLOCKWISE,
+}
 
 
 @dataclass
@@ -30,11 +38,17 @@ class RandomFlipRotate(PatchTransform):
         self._rng = np.random.default_rng(self.seed)
 
     def __call__(self, image: np.ndarray) -> np.ndarray:
-        if self._rng.random() < self.p_hflip:
-            image = np.flip(image, axis=1).copy()
-        if self._rng.random() < self.p_vflip:
-            image = np.flip(image, axis=0).copy()
-        if self._rng.random() < self.p_rot90:
-            k = int(self._rng.integers(1, 4))
-            image = np.rot90(image, k=k).copy()
-        return image
+        hflip = self._rng.random() < self.p_hflip
+        vflip = self._rng.random() < self.p_vflip
+        k = int(self._rng.integers(1, 4)) if self._rng.random() < self.p_rot90 else 0
+
+        # OpenCV flips and rotates in one pass each, while copying a flipped
+        # or rotated numpy view walks the image in a cache-unfriendly order.
+        out = image
+        if hflip or vflip:
+            out = cv2.flip(out, -1 if hflip and vflip else 1 if hflip else 0)
+        if k:
+            out = cv2.rotate(out, _ROTATIONS[k])
+        if out.ndim < image.ndim:
+            out = out[:, :, np.newaxis]  # OpenCV drops a single channel axis
+        return out

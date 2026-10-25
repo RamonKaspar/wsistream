@@ -404,6 +404,22 @@ class TestSeedDiversity:
 
         assert epochs(persistent_workers=False) == epochs(persistent_workers=True)
 
+    def test_adjacent_seeds_draw_distinct_worker_streams(self):
+        """seed=base_seed + rank must not give workers on two ranks the same stream."""
+        paths = fake_slide_paths(4)
+
+        def worker_coordinates(seed: int) -> list[list[tuple[int, int]]]:
+            dataset = _make_dataset(n_slides=4, patches_per_slide=3, seed=seed)
+            loader = DataLoader(dataset, batch_size=None, num_workers=2)
+            coordinates: list[list[tuple[int, int]]] = [[], []]
+            for item in loader:
+                worker_id = paths.index(item["slide_path"]) % 2
+                coordinates[worker_id].append((int(item["x"]), int(item["y"])))
+            return coordinates
+
+        streams = worker_coordinates(42) + worker_coordinates(43)
+        assert len({tuple(stream) for stream in streams}) == 4
+
 
 # ── Parameter validation ──
 

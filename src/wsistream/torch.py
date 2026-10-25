@@ -119,13 +119,14 @@ class _StatsAggregator:
         # forkserver workers.  Spawn-context primitives remain usable when
         # inherited by fork workers, so use the portable context explicitly.
         context = mp.get_context("spawn")
-        # Shared-memory counters (additive)
-        self._slides_processed = context.Value("i", 0)
-        self._slides_failed = context.Value("i", 0)
-        self._patches_extracted = context.Value("i", 0)
-        self._patches_filtered = context.Value("i", 0)
-        self._error_count = context.Value("i", 0)
-        self._tf_count = context.Value("i", 0)
+        # Shared-memory counters (additive). 64-bit, since a 32-bit patch count
+        # wraps after about 12 days at 2000 patches/s.
+        self._slides_processed = context.Value("q", 0)
+        self._slides_failed = context.Value("q", 0)
+        self._patches_extracted = context.Value("q", 0)
+        self._patches_filtered = context.Value("q", 0)
+        self._error_count = context.Value("q", 0)
+        self._tf_count = context.Value("q", 0)
         self._tf_total = context.Value("d", 0.0)
         self._tf_min = context.Value("d", float("inf"))
         self._tf_max = context.Value("d", float("-inf"))

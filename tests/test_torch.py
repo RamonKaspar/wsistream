@@ -325,6 +325,22 @@ class TestSharedStats:
         assert stats["pipeline/slides_failed"] == 3
         assert stats["pipeline/patches_extracted"] == 0
 
+    def test_counters_hold_more_than_32_bits(self):
+        aggregator = _StatsAggregator()
+        for _ in range(2):
+            aggregator.add_counters(
+                slides_processed=0,
+                slides_failed=0,
+                patches_extracted=2**31 - 1,
+                patches_filtered=0,
+                error_count=0,
+                tf_count=0,
+                tf_total=0.0,
+                tf_min=float("inf"),
+                tf_max=float("-inf"),
+            )
+        assert aggregator.to_dict()["pipeline/patches_extracted"] == 2**32 - 2
+
     def test_stats_reset(self):
         dataset = _make_dataset(n_slides=1, patches_per_slide=5)
         list(dataset)

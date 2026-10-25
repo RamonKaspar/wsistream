@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import linecache
 import warnings
 from pathlib import Path
@@ -460,8 +461,79 @@ class TestPatchPipelineViews:
             views=[ViewConfig(name="context", mpp_override=1.0)],
             pool_size=1,
             patches_per_slide=1,
+            cycle=True,
         )
-        with pytest.raises(ValueError, match="no MPP metadata"):
+        assert list(pipeline) == []
+        assert pipeline.stats.slides_failed == 1
+        assert pipeline.stats.slides_processed == 0
+        assert "no MPP metadata" in pipeline.stats.recent_errors[0][1]
+
+    def test_slide_without_mpp_metadata_does_not_end_the_stream(self):
+        paths = fake_slide_paths(3)
+
+        class _NoMppOnSlide1(FakeBackend):
+            def get_properties(self) -> SlideProperties:
+                props = super().get_properties()
+                return dataclasses.replace(props, mpp=None) if props.path == paths[1] else props
+
+        pipeline = PatchPipeline(
+            slide_paths=paths,
+            backend=_NoMppOnSlide1(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
+            views=[ViewConfig(name="context", mpp_override=1.0)],
+            pool_size=2,
+            patches_per_slide=2,
+            cycle=True,
+        )
+        iterator = iter(pipeline)
+        results = [next(iterator) for _ in range(12)]
+        assert {r.coordinate.slide_path for r in results} == {paths[0], paths[2]}
+        assert pipeline.stats.slides_failed == 1
+        assert pipeline.stats.error_count == 1
+
+    def test_failed_view_read_drops_only_that_patch(self):
+        class _FailSecondViewRead(FakeBackend):
+            view_reads = 0
+
+            def read_region(self, x: int, y: int, level: int, width: int, height: int):
+                if level == 2:
+                    type(self).view_reads += 1
+                    if type(self).view_reads == 2:
+                        raise OSError("corrupt tile")
+                return super().read_region(x, y, level, width, height)
+
+        path = fake_slide_paths(1)[0]
+        pipeline = PatchPipeline(
+            slide_paths=[path],
+            backend=_FailSecondViewRead(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
+            views=[ViewConfig(name="context", mpp_override=1.0)],
+            pool_size=1,
+            patches_per_slide=4,
+        )
+        results = list(pipeline)
+        assert len(results) == 3
+        assert pipeline.stats.patches_extracted == 3
+        assert pipeline.stats.slides_failed == 0
+        assert list(pipeline.stats.recent_errors) == [(path, "corrupt tile")]
+
+    def test_view_transform_error_is_raised(self):
+        class FailingTransform(PatchTransform):
+            def __call__(self, image: np.ndarray) -> np.ndarray:
+                raise RuntimeError("boom")
+
+        pipeline = PatchPipeline(
+            slide_paths=fake_slide_paths(1),
+            backend=FakeBackend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=64, num_patches=1, seed=42),
+            views=[ViewConfig(name="context", mpp_override=1.0, transforms=FailingTransform())],
+            pool_size=1,
+            patches_per_slide=1,
+        )
+        with pytest.raises(RuntimeError, match="boom"):
             next(iter(pipeline))
 
     def test_mpp_override_exceeding_slide_dimensions_warns(self):

@@ -324,6 +324,8 @@ class WsiStreamDataset(IterableDataset):
         Every iteration (epoch) of the dataset draws a distinct deterministic
         stream, with or without persistent DataLoader workers, and a new
         dataset with the same seed replays the same sequence of streams.
+        Datasets with different seeds, such as ``seed=base_seed + rank``
+        on each DDP rank, draw different streams in every worker.
         ``None`` (default) draws fresh entropy for every iteration.
     views : list[ViewConfig] or None
         Optional multi-view configuration.  Mutually exclusive with
@@ -421,11 +423,7 @@ class WsiStreamDataset(IterableDataset):
             slides = self._slide_paths[worker_info.id :: worker_info.num_workers]
             # Map each (iteration, worker) pair to a distinct deterministic seed.
             iteration = self._next_worker_iteration(worker_info.id)
-            worker_seed = (
-                self._seed + iteration * worker_info.num_workers + worker_info.id
-                if self._seed is not None
-                else None
-            )
+            worker_seed = self._derive_seed(iteration, worker_info.id)
             logger.debug(
                 "Worker %d/%d: %d slides",
                 worker_info.id,
@@ -434,7 +432,7 @@ class WsiStreamDataset(IterableDataset):
             )
         else:
             slides = self._slide_paths
-            worker_seed = self._seed + self._iter_count if self._seed is not None else None
+            worker_seed = self._derive_seed(self._iter_count)
 
         if not slides:
             logger.warning("Worker got 0 slides, yielding nothing")
@@ -524,6 +522,18 @@ class WsiStreamDataset(IterableDataset):
         with self._worker_iterations.get_lock():
             self._worker_iterations[worker_id] += 1
             return self._worker_iterations[worker_id]
+
+    def _derive_seed(self, *key: int) -> int | None:
+        """Derive the pipeline seed for one iteration (and worker) from the dataset seed.
+
+        A seed plus offsets would give rank 0 / worker 1 the same seed as
+        rank 1 / worker 0 under ``seed=base_seed + rank``, so the key is
+        hashed into the seed with ``SeedSequence`` instead.
+        """
+        if self._seed is None:
+            return None
+        state = np.random.SeedSequence(self._seed, spawn_key=key).generate_state(1, np.uint64)
+        return int(state[0])
 
     def _flush_stats(
         self,

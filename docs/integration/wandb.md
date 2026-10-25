@@ -124,7 +124,7 @@ Convert CUDA-derived scalars such as the loss only after `mark_step()` returns a
 A high `loader/data_fraction` means the host spent much of the measured window blocked in the DataLoader. It is a useful signal, but does not by itself identify the cause or prove that the GPU was idle. Compare it with accelerator utilization and benchmark worker, storage, and transform settings before changing the pipeline. See [Benchmarking](benchmarking.md) for the configuration sweep.
 
 !!! note "Live stats accuracy"
-    With `num_workers=0`, pipeline stats are exact on every step. With `num_workers>0`, stats are aggregated from worker processes and may lag by up to 16 patches per worker between flushes. Final totals at the end of iteration are always correct.
+    Counters such as `pipeline/patches_extracted` are exact on every step with `num_workers=0`. With `num_workers>0`, they are aggregated from worker processes and may lag by up to 16 patches per worker between flushes. Magnification counts (`pipeline/mpp_*`) are only sent when a new slide opens, so they leave out the patches read since then. Final totals at the end of iteration are always correct.
 
 ## DDP
 

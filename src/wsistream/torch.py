@@ -398,13 +398,23 @@ class WsiStreamDataset(IterableDataset):
         # every epoch, so each worker's iterations are counted in shared memory.
         self._worker_iterations = mp.get_context("spawn").Array("q", _MAX_WORKERS)
         self._shared_stats = _StatsAggregator()
+        # Counts reset_stats() calls, so iterating workers notice them.
+        self._stats_resets = mp.get_context("spawn").Value("q", 0)
 
     def stats_dict(self) -> dict:
         """Aggregated stats from all workers. Safe to call from the main process."""
         return self._shared_stats.to_dict()
 
     def reset_stats(self) -> None:
-        """Reset all shared counters (e.g., between epochs)."""
+        """Reset all shared counters (e.g., between epochs or logging windows).
+
+        Iterations in progress then count only the patches they stream from
+        their next one on, like :meth:`PatchPipeline.reset_stats`, so
+        ``slides_unique`` and the tissue fractions cover only slides opened
+        after the reset.
+        """
+        with self._stats_resets.get_lock():
+            self._stats_resets.value += 1
         self._shared_stats.reset()
 
     def __iter__(self) -> Iterator[dict]:
@@ -467,6 +477,7 @@ class WsiStreamDataset(IterableDataset):
         prev_cancer: dict = {}
         prev_sample: dict = {}
         patch_count = 0
+        stats_resets = self._stats_resets.value
 
         try:
             for result in pipeline:
@@ -489,6 +500,16 @@ class WsiStreamDataset(IterableDataset):
                         prev_sample,
                     )
                 yield self._result_to_dict(result)
+                if self._stats_resets.value != stats_resets:
+                    # reset_stats() was called. Drop the deltas that are not yet
+                    # flushed, which belong to the patches before it, and count
+                    # from scratch.
+                    stats_resets = self._stats_resets.value
+                    pipeline.reset_stats()
+                    prev_counters = [0, 0, 0, 0, 0, 0, 0.0]
+                    prev_slides_total = 0
+                    prev_slides_seen = set()
+                    prev_mpp, prev_cancer, prev_sample = {}, {}, {}
         finally:
             prev_counters, _, prev_slides_seen, prev_mpp, prev_cancer, prev_sample = (
                 self._flush_stats(

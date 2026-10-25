@@ -17,10 +17,11 @@ def plot_tissue_mask(
     save_path: str | Path | None = None,
 ) -> np.ndarray:
     """Overlay a tissue mask on a thumbnail. Returns the overlay image."""
+    # Tint only the tissue; blending the whole image with an unpainted
+    # background would darken everything outside the mask.
     overlay = thumbnail.copy()
-    mask_rgb = np.zeros_like(overlay)
-    mask_rgb[mask] = color
-    overlay = cv2.addWeighted(overlay, 1 - alpha, mask_rgb, alpha, 0)
+    tinted = cv2.addWeighted(thumbnail, 1 - alpha, np.full_like(thumbnail, color), alpha, 0)
+    overlay[mask] = tinted[mask]
 
     mask_uint8 = mask.astype(np.uint8) * 255
     contours, _ = cv2.findContours(mask_uint8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)

@@ -15,6 +15,11 @@ class TestPlotTissueMask:
         overlay = plot_tissue_mask(white_thumbnail, sample_mask, color=(255, 0, 0))
         assert overlay.shape == (100, 100, 3)
 
+    def test_tissue_overlay_leaves_background_unchanged(self, white_thumbnail, sample_mask):
+        overlay = plot_tissue_mask(white_thumbnail, sample_mask, alpha=0.5, color=(0, 255, 0))
+        np.testing.assert_array_equal(overlay[5, 5], white_thumbnail[5, 5])
+        np.testing.assert_array_equal(overlay[50, 50], [40, 168, 40])  # (80 + color) / 2
+
 
 class TestPlotPatchGrid:
     def test_grid_layout(self):

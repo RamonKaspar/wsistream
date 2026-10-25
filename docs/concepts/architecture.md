@@ -81,7 +81,7 @@ Cache entries are invalidated automatically when the backend object, tissue-dete
 
 ### Failure handling
 
-A failing slide never ends the stream. A slide that cannot be opened, or whose tissue detection fails, is counted in `slides_failed` and skipped; with `cycle=True` it is tried again on the next pass. A slide whose reads all fail, or whose sampler raises (for example `RandomSampler(level=2)` on a slide with two pyramid levels), is closed and never reopened. Every error is logged as a warning and kept in `pipeline.stats.recent_errors`.
+A failing slide never ends the stream. A slide that cannot be opened, or whose tissue detection fails, is counted in `slides_failed` and skipped; with `cycle=True` it is tried again on the next pass. A slide whose reads all fail, or whose sampler raises (for example `RandomSampler(level=2)` on a slide with two pyramid levels), is closed and never reopened. With `cycle=True`, a slide whose sampler yields no coordinates, typically because no position passes the tissue threshold, is not reopened either; it is logged as a warning but not counted in `slides_failed`, and the stream ends once no slide yields coordinates. Every error is logged as a warning and kept in `pipeline.stats.recent_errors`.
 
 ## Data types
 

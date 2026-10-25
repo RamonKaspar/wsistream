@@ -594,7 +594,8 @@ class WsiStreamDataset(IterableDataset):
         if self._output_dtype == "uint8":
             return tensor.contiguous()
         if image.dtype == np.uint8:
-            return tensor.float() / 255.0
+            # In place: dividing into a new tensor would allocate a second one.
+            return tensor.float().div_(255.0)
         return tensor.float()
 
 

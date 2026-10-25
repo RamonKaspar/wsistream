@@ -16,6 +16,8 @@ import pickle
 import socket
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -128,6 +130,32 @@ def _configure_threads() -> dict[str, str]:
         "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS", "?"),
         "torch.num_threads": str(torch.get_num_threads()),
     }
+
+
+@contextmanager
+def _restored_thread_settings() -> Iterator[None]:
+    """Undo what :func:`_configure_threads` changes, so the caller's training is unaffected."""
+    import torch
+
+    env = {name: os.environ.get(name) for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS")}
+    torch_threads = torch.get_num_threads()
+    try:
+        import cv2
+
+        cv2_threads: int | None = cv2.getNumThreads()
+    except ImportError:
+        cv2_threads = None
+    try:
+        yield
+    finally:
+        for name, value in env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        torch.set_num_threads(torch_threads)
+        if cv2_threads is not None:
+            cv2.setNumThreads(cv2_threads)
 
 
 def _measure_rank(
@@ -358,6 +386,7 @@ def _ensure_list(x: int | list[int]) -> list[int]:
     return x if isinstance(x, list) else [x]
 
 
+@_restored_thread_settings()
 def benchmark_throughput(
     make_dataset: MakeDatasetFn,
     slide_paths: str | Path | list[str | Path],

@@ -111,7 +111,7 @@ When `world_size > 1`, the benchmark spawns actual processes via `torch.multipro
 
 ## Thread control
 
-The benchmark pins `OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`, `torch.set_num_threads(1)`, and `cv2.setNumThreads(1)` before running. This ensures consistent, comparable results across configs — without pinning, OpenCV and NumPy may spawn varying numbers of internal threads that interfere with measurements.
+The benchmark pins `OMP_NUM_THREADS=1`, `MKL_NUM_THREADS=1`, `torch.set_num_threads(1)`, and `cv2.setNumThreads(1)` before running, and restores the previous settings when it returns. This ensures consistent, comparable results across configs — without pinning, OpenCV and NumPy may spawn varying numbers of internal threads that interfere with measurements.
 
 ## Oversubscription
 

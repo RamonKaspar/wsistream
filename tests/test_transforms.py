@@ -445,13 +445,14 @@ class TestHEDMatchesTellez:
             beta = rng.uniform(-sigma, sigma)
             concentrations[:, :, ch] = concentrations[:, :, ch] * alpha + beta
         expected = np.clip(
-            np.rint((np.exp(-(concentrations @ stain_matrix)) - epsilon) * 255),
+            (np.exp(-(concentrations @ stain_matrix)) - epsilon) * 255,
             0,
             255,
-        ).astype(np.uint8)
+        )
 
         got = HEDColorAugmentation(sigma=sigma, seed=0)(img)
-        np.testing.assert_array_equal(got, expected)
+        # Rounded to the nearest level, up to float32 precision.
+        assert np.abs(got - expected).max() <= 0.5 + 1e-3
 
     def test_no_skimage_clamping(self):
         """Negative concentrations must survive, unlike skimage.separate_stains."""

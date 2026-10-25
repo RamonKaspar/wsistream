@@ -42,7 +42,7 @@ pipeline = PatchPipeline(
     slide_paths="/path/to/slides",  # directory or list of files
     backend=OpenSlideBackend(),
     tissue_detector=OtsuTissueDetector(),
-    sampler=RandomSampler(patch_size=256, num_patches=-1, seed=42),
+    sampler=RandomSampler(patch_size=256, num_patches=-1),
     patch_filter=HSVPatchFilter(),
     transforms=ComposeTransforms(transforms=[
         HEDColorAugmentation(sigma=0.05),
@@ -51,6 +51,7 @@ pipeline = PatchPipeline(
     ]),
     pool_size=1,
     patches_per_slide=100,
+    seed=42,
 )
 
 for result in pipeline:

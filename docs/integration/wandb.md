@@ -63,7 +63,7 @@ stats.slides_failed               # int
 stats.slides_seen                 # set[str] — unique slide paths seen
 stats.patches_extracted           # int
 stats.patches_filtered            # int (rejected by PatchFilter)
-stats.tissue_fractions.count      # int — number of slides
+stats.tissue_fractions.count      # int — number of slide openings
 stats.tissue_fractions.mean       # float | None
 stats.tissue_fractions.min_val    # float
 stats.tissue_fractions.max_val    # float

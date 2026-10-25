@@ -91,7 +91,7 @@ The pipeline produces `PatchResult` objects. Here are the key data types:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `image` | `np.ndarray` or `None` | Patch pixels when `transforms` are used. `(H, W, 3)`, `uint8` (or `float32` after normalization). |
+| `image` | `np.ndarray` or `None` | Patch pixels in single-view mode. `(H, W, 3)`, `uint8` (or `float32` after normalization). `None` when `views` are configured. |
 | `views` | `dict[str, np.ndarray]` or `None` | Named multi-view outputs when `views` are configured. |
 | `coordinate` | `PatchCoordinate` | Where this patch came from. |
 | `tissue_fraction` | `float` | Fraction of the patch region covered by tissue, in `[0, 1]`. |
@@ -152,7 +152,7 @@ PatchPipeline(
     slide_sampling="sequential",# "sequential" or "random" slide order
     cycle=False,                # infinite cycling over slides
     replacement="with_replacement",  # "without_replacement" for no repeated coords per slide
-    seed=None,                  # random seed for slide-level shuffling
+    seed=None,                  # seeds every RNG: slide order, sampler, transforms, crops
 )
 ```
 

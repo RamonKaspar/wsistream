@@ -3,9 +3,15 @@
 ## Installation
 
 ```bash
+pip install "wsistream[openslide]"   # or [tiffslide], [torch], or [all]
+```
+
+For development, install from a clone:
+
+```bash
 git clone https://github.com/RamonKaspar/wsistream.git
 cd wsistream
-pip install -e ".[openslide]"   # or [tiffslide], or [all], or [dev]
+pip install -e ".[dev]"
 ```
 
 Available extras:
@@ -50,7 +56,7 @@ Each iteration yields a `PatchResult` with the following fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `image` | `np.ndarray` or `None` | The patch pixels when `transforms` are used. Shape `(H, W, 3)`, dtype `uint8` (or `float32` after normalization). `None` when `views` are configured. |
+| `image` | `np.ndarray` or `None` | The patch pixels in single-view mode. Shape `(H, W, 3)`, dtype `uint8` (or `float32` after normalization). `None` when `views` are configured. |
 | `views` | `dict[str, np.ndarray]` or `None` | Named multi-view outputs when `views` are configured. |
 | `coordinate` | `PatchCoordinate` | Location in the slide: `x`, `y`, `level`, `patch_size`, `mpp`, `slide_path`. |
 | `tissue_fraction` | `float` | Fraction of the patch region covered by tissue (from the tissue mask), in `[0, 1]`. |

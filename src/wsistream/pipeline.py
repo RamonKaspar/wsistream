@@ -487,9 +487,12 @@ class PatchPipeline:
         return self._stats.to_dict()
 
     def reset_stats(self) -> None:
-        """Reset all accumulated statistics (e.g. between epochs)."""
+        """Reset all accumulated statistics (e.g. between epochs).
+
+        Slides that are never reopened, such as those whose reads all
+        failed, stay excluded.
+        """
         self._stats = PipelineStats()
-        self._failed_slides.clear()
 
     def clear_tissue_mask_cache(self) -> None:
         """Clear cached tissue masks without changing pipeline statistics."""

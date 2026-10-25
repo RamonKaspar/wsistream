@@ -151,7 +151,7 @@ Semantics:
 - **Per-slide**: each slide maintains its own independent pool. There is no corpus-wide coordination.
 - **Unique slide paths**: each slide path may occur only once in the pipeline input. Duplicate paths raise a `ValueError` because a repeated path would make the cycle boundary ambiguous.
 - **Filtered patches are consumed**: coordinates rejected by `patch_filter` are not retried in the same cycle, since the filter is deterministic on the patch content.
-- **Memory**: the pool stores one `PatchCoordinate` per valid grid cell per slide. For a 100,000 x 100,000 slide at patch_size=256, that is up to ~150k coordinates (~12 MB). With many simultaneously open slides or very small patch sizes, this can add up.
+- **Memory**: the pool stores one `PatchCoordinate` (about 130 bytes) per valid grid cell per slide. For a 100,000 x 100,000 slide at patch_size=256, that is up to ~150k coordinates (~20 MB). With many simultaneously open slides or very small patch sizes, this can add up.
 
 ## Writing your own
 

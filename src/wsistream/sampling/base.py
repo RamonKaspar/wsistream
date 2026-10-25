@@ -165,21 +165,34 @@ def enumerate_grid_coordinates(
     if mpp is None:
         mpp = props.mpp_at_level(level)
 
-    coordinates: list[PatchCoordinate] = []
-    for y in range(0, props.height - patch_l0 + 1, patch_l0):
-        for x in range(0, props.width - patch_l0 + 1, patch_l0):
-            if tissue_mask.contains_tissue(x, y, patch_l0, patch_l0, tissue_threshold):
-                coordinates.append(
-                    PatchCoordinate(
-                        x=x,
-                        y=y,
-                        level=level,
-                        patch_size=patch_size,
-                        mpp=mpp,
-                        slide_path=props.path,
-                    )
-                )
-    return coordinates
+    xs = np.arange(0, props.width - patch_l0 + 1, patch_l0)
+    ys = np.arange(0, props.height - patch_l0 + 1, patch_l0)
+    if len(xs) == 0 or len(ys) == 0:
+        return []
+
+    # Look up every grid position at once, with the cell assignment of
+    # TissueMask.contains_tissue, instead of checking positions one by one.
+    h_mask, w_mask = tissue_mask.mask.shape
+    cells_x = np.minimum((xs / tissue_mask.downsample).astype(np.int64), w_mask - 1)
+    cells_y = np.minimum((ys / tissue_mask.downsample).astype(np.int64), h_mask - 1)
+    fractions = tissue_mask.tissue_fraction_grid(patch_l0, patch_l0, cells_x, cells_y)
+    rows, cols = np.nonzero(fractions >= tissue_threshold)
+
+    # np.nonzero is row-major, so the order matches a y-then-x scan of the grid.
+    # Coordinates in one row or column share their Python ints, which keeps
+    # large pools small.
+    x_values, y_values = xs.tolist(), ys.tolist()
+    return [
+        PatchCoordinate(
+            x=x_values[col],
+            y=y_values[row],
+            level=level,
+            patch_size=patch_size,
+            mpp=mpp,
+            slide_path=props.path,
+        )
+        for row, col in zip(rows.tolist(), cols.tolist())
+    ]
 
 
 def resolve_mpp_read(

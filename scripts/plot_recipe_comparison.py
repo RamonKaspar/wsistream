@@ -51,7 +51,7 @@ def main():
 
     # Pick a random slide
     slide_dir = Path(args.slide_dir)
-    slides = [p for p in slide_dir.iterdir() if p.suffix.lower() in WSI_EXTENSIONS]
+    slides = [p for p in slide_dir.rglob("*") if p.suffix.lower() in WSI_EXTENSIONS]
     if not slides:
         raise FileNotFoundError(f"No WSI files found in {slide_dir}")
 

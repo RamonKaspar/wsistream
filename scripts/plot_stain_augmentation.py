@@ -21,7 +21,10 @@ import albumentations as A
 import matplotlib.pyplot as plt
 import numpy as np
 
-from scripts._helpers import get_backend
+try:
+    from scripts._helpers import get_backend
+except ModuleNotFoundError:
+    from _helpers import get_backend
 from wsistream.types import WSI_EXTENSIONS
 
 N_SAMPLES = 3  # augmented versions per method per patch

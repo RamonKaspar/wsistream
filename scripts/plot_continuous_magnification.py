@@ -21,7 +21,10 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
-from scripts._helpers import get_backend
+try:
+    from scripts._helpers import get_backend
+except ModuleNotFoundError:
+    from _helpers import get_backend
 from wsistream.sampling.continuous_magnification import _best_level_for_downsample
 from wsistream.types import WSI_EXTENSIONS
 

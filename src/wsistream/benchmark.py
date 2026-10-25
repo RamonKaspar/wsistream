@@ -169,21 +169,22 @@ def _measure_rank(
     # Start memory monitoring before warmup (captures slide opens + worker startup)
     mem_monitor = _MemoryMonitor(interval=0.5)
     mem_monitor.start()
+    try:
+        for _ in range(warmup_batches):
+            next(loader_iter)
 
-    for _ in range(warmup_batches):
-        next(loader_iter)
-
-    batch_times: list[float] = []
-    total_patches = 0
-    t_start = time.perf_counter()
-    for _ in range(measure_batches):
-        t_batch = time.perf_counter()
-        batch = next(loader_iter)
-        batch_times.append(time.perf_counter() - t_batch)
-        total_patches += infer_batch_size(batch)
-    elapsed = time.perf_counter() - t_start
-
-    peak_rss_mb = mem_monitor.stop()
+        batch_times: list[float] = []
+        total_patches = 0
+        t_start = time.perf_counter()
+        for _ in range(measure_batches):
+            t_batch = time.perf_counter()
+            batch = next(loader_iter)
+            batch_times.append(time.perf_counter() - t_batch)
+            total_patches += infer_batch_size(batch)
+        elapsed = time.perf_counter() - t_start
+    finally:
+        # A failed config must not leave the monitor thread running.
+        peak_rss_mb = mem_monitor.stop()
 
     return {
         "total_patches": total_patches,

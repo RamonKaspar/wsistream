@@ -5,11 +5,13 @@ from __future__ import annotations
 import pytest
 
 from tests.conftest import FakeBackend, fake_slide_paths
+from wsistream import benchmark
 from wsistream.benchmark import BenchmarkResult, benchmark_throughput
 from wsistream.sampling.random import RandomSampler
 from wsistream.tissue.otsu import OtsuTissueDetector
 from wsistream.torch import WsiStreamDataset
 from wsistream.transforms import ResizeTransform
+from wsistream.transforms.base import PatchTransform
 from wsistream.views import ViewConfig
 
 
@@ -58,6 +60,26 @@ def _make_multi_view_dataset(slide_paths, pool_size, patches_per_slide, patches_
         tissue_detector=OtsuTissueDetector(),
         sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
         views=[ViewConfig(name="view", transforms=ResizeTransform(32))],
+        pool_size=pool_size,
+        patches_per_slide=patches_per_slide,
+        patches_per_visit=patches_per_visit,
+        cycle=True,
+        seed=seed,
+    )
+
+
+class _FailingTransform(PatchTransform):
+    def __call__(self, image):
+        raise RuntimeError("transform failed")
+
+
+def _make_failing_dataset(slide_paths, pool_size, patches_per_slide, patches_per_visit, seed):
+    return WsiStreamDataset(
+        slide_paths=slide_paths,
+        backend=FakeBackend(),
+        tissue_detector=OtsuTissueDetector(),
+        sampler=RandomSampler(patch_size=64, num_patches=-1, seed=42),
+        transforms=_FailingTransform(),
         pool_size=pool_size,
         patches_per_slide=patches_per_slide,
         patches_per_visit=patches_per_visit,
@@ -233,6 +255,37 @@ class TestBenchmarkMultiRank:
         assert len(r.per_rank_patches_per_sec) == 2
         assert r.effective_sync_throughput > 0
         assert all(pps > 0 for pps in r.per_rank_patches_per_sec)
+
+
+class TestBenchmarkFailures:
+    def test_failed_configs_stop_their_memory_monitors(self, monkeypatch):
+        monitors = []
+
+        class _TrackedMonitor(benchmark._MemoryMonitor):
+            def __init__(self, interval: float = 0.5) -> None:
+                super().__init__(interval)
+                self.stopped = False
+                monitors.append(self)
+
+            def stop(self) -> float:
+                self.stopped = True
+                return super().stop()
+
+        monkeypatch.setattr(benchmark, "_MemoryMonitor", _TrackedMonitor)
+        with pytest.raises(RuntimeError, match="configuration\\(s\\) failed"):
+            benchmark_throughput(
+                make_dataset=_make_failing_dataset,
+                slide_paths=fake_slide_paths(2),
+                num_workers=0,
+                pool_size=[1, 2],
+                patches_per_slide=10,
+                batch_size=2,
+                warmup_batches=1,
+                measure_batches=1,
+                verbose=False,
+            )
+        assert len(monitors) == 2
+        assert all(monitor.stopped for monitor in monitors)
 
 
 class TestBenchmarkValidation:

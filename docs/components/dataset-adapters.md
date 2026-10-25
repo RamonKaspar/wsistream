@@ -57,7 +57,7 @@ manifest = query_tcga_slides(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `cancer_types` | str, list, or None | `None` | TCGA project IDs (e.g., `"TCGA-BRCA"`). `None` = all projects. |
+| `cancer_types` | str, list, or None | `None` | TCGA project IDs (e.g., `"TCGA-BRCA"`). `None` = all TCGA projects. |
 | `slide_type` | str | `"diagnostic"` | `"diagnostic"` (FFPE), `"frozen"` (tissue sections), or `"all"`. |
 | `max_per_cancer_type` | int or None | `None` | Stratified cap. `None` = return all matching slides. |
 | `seed` | int or None | `42` | Random seed for reproducible subsampling. |

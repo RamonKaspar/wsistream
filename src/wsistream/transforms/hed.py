@@ -118,4 +118,4 @@ class HEDColorAugmentation(PatchTransform):
             concentrations[:, :, ch] = concentrations[:, :, ch] * alpha + beta
 
         rgb_out = np.exp(-(concentrations @ inv)) - _EPSILON
-        return np.clip(rgb_out * 255, 0, 255).astype(np.uint8)
+        return np.clip(np.rint(rgb_out * 255), 0, 255).astype(np.uint8)

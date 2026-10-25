@@ -279,7 +279,7 @@ class TestHEDColorAugmentation:
         assert out.shape == (64, 64, 3)
         assert out.dtype == np.uint8
 
-    def test_zero_sigma_is_near_identity(self):
+    def test_zero_sigma_is_identity(self):
         rng = np.random.default_rng(0)
         img = rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)
         img[0, 0] = 0
@@ -287,8 +287,9 @@ class TestHEDColorAugmentation:
         img[0, 2] = [0, 128, 255]
 
         out = HEDColorAugmentation(sigma=0.0)(img)
-        # The float RGB->HED->RGB round trip can truncate by one uint8 level.
-        assert np.abs(out.astype(int) - img.astype(int)).max() <= 1
+        # The float RGB->HED->RGB round trip is off by far less than half a
+        # level, so rounding restores every value.
+        np.testing.assert_array_equal(out, img)
 
     def test_rejects_negative_sigma(self):
         with pytest.raises(ValueError, match="sigma must be"):
@@ -444,7 +445,7 @@ class TestHEDMatchesTellez:
             beta = rng.uniform(-sigma, sigma)
             concentrations[:, :, ch] = concentrations[:, :, ch] * alpha + beta
         expected = np.clip(
-            (np.exp(-(concentrations @ stain_matrix)) - epsilon) * 255,
+            np.rint((np.exp(-(concentrations @ stain_matrix)) - epsilon) * 255),
             0,
             255,
         ).astype(np.uint8)
@@ -465,9 +466,9 @@ class TestHEDMatchesTellez:
 
         t = HEDColorAugmentation(sigma=0.0, sigma_bias=0.0, seed=0)
         out = t(img)
-        # With zero perturbation, a clamping-free roundtrip should lose at
-        # most 1 level (float rounding). Clamped roundtrip loses up to ~77.
-        assert np.abs(out.astype(int) - img.astype(int)).max() <= 1
+        # With zero perturbation, a clamping-free roundtrip returns the image.
+        # Clamped roundtrip loses up to ~77 levels.
+        np.testing.assert_array_equal(out, img)
 
     def test_default_stays_in_plausible_stain_range(self):
         """Guards the scale trap: beta at the paper's sigma shifts hue wildly.

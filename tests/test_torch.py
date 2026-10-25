@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gc
 import multiprocessing as mp
+import threading
 import warnings
 
 import cv2
@@ -16,7 +18,7 @@ from wsistream.datasets.base import DatasetAdapter
 from wsistream.filters.base import PatchFilter
 from wsistream.sampling.random import RandomSampler
 from wsistream.tissue.otsu import OtsuTissueDetector
-from wsistream.torch import WsiStreamDataset, partition_slides_by_rank
+from wsistream.torch import WsiStreamDataset, _StatsAggregator, partition_slides_by_rank
 from wsistream.transforms import NormalizeTransform
 from wsistream.transforms.base import PatchTransform
 from wsistream.types import SlideMetadata
@@ -54,6 +56,12 @@ class _ReadOnlyTransform(PatchTransform):
 class _FailBackend(FakeBackend):
     def open(self, path: str) -> None:
         raise RuntimeError("disk on fire")
+
+
+def _push_histograms(aggregator: _StatsAggregator, count: int) -> None:
+    """Send ``count`` histogram messages, each naming a distinct long slide path."""
+    for i in range(count):
+        aggregator.push_histograms([f"/data/{'x' * 200}/slide_{i}.svs"], {0.5: 1}, {}, {})
 
 
 class _FakeAdapter(DatasetAdapter):
@@ -343,6 +351,38 @@ class TestSharedStats:
         stats2 = dataset.stats_dict()
         assert stats2["pipeline/slides_unique"] == 3  # still 3, not 6
         assert stats2["pipeline/slides_processed"] == 6  # 3 + 3
+
+    def test_unread_histograms_do_not_block_workers(self):
+        """A worker must not block when stats_dict() is not called; 2000 messages overfill a pipe."""
+        aggregator = _StatsAggregator()
+        worker = mp.get_context("spawn").Process(target=_push_histograms, args=(aggregator, 2000))
+        worker.start()
+        worker.join(timeout=60)
+        blocked = worker.is_alive()
+        if blocked:
+            worker.terminate()
+        assert not blocked
+
+        stats = aggregator.to_dict()
+        assert stats["pipeline/mpp_0.50"] == 2000
+        assert stats["pipeline/slides_unique"] == 2000
+
+    def test_unread_histograms_do_not_block_the_main_process(self):
+        """With num_workers=0, the main process writes the histogram messages itself."""
+        aggregator = _StatsAggregator()
+        writer = threading.Thread(target=_push_histograms, args=(aggregator, 2000), daemon=True)
+        writer.start()
+        writer.join(timeout=60)
+        assert not writer.is_alive()
+        assert aggregator.to_dict()["pipeline/mpp_0.50"] == 2000
+
+    def test_drain_thread_ends_with_its_aggregator(self):
+        aggregator = _StatsAggregator()
+        drainer = aggregator._drainer
+        del aggregator
+        gc.collect()
+        drainer.join(timeout=10)
+        assert not drainer.is_alive()
 
 
 # ── Re-iteration seed diversity ──

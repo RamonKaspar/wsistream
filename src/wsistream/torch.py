@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import multiprocessing as mp
+import threading
+import weakref
+from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Iterator, Literal
 
@@ -68,6 +71,32 @@ def partition_slides_by_rank(
     return slides
 
 
+def _drain_histogram_pipe(
+    reader: Connection,
+    lock: threading.Lock,
+    owner: weakref.ReferenceType[_StatsAggregator],
+) -> None:
+    """Merge histogram messages into their aggregator as workers send them.
+
+    Runs in a daemon thread of the main process: workers block once the pipe
+    is full, and nothing else reads it unless ``stats_dict()`` is called.  The
+    thread keeps only a weak reference to the aggregator, still reads messages
+    after the aggregator is gone so that its workers never block, and ends once
+    every copy of the write end is closed.
+    """
+    try:
+        while reader.poll(None):
+            with lock:
+                aggregator = owner()
+                while reader.poll():
+                    message = reader.recv()
+                    if aggregator is not None:
+                        aggregator._merge_histograms(message)
+                del aggregator
+    except (EOFError, OSError):
+        pass
+
+
 class _StatsAggregator:
     """Aggregates pipeline stats from multiple workers.
 
@@ -76,9 +105,13 @@ class _StatsAggregator:
     - **Core counters** (slides, patches, tissue fractions): ``mp.Value``
       shared memory objects.  Workers atomically add deltas.  Survives
       worker shutdown, no pipe buffer, no Manager process.
-    - **Sparse histograms** (mpp counts, cancer/sample types):
-      ``mp.SimpleQueue``, flushed only on slide rotation (very infrequent).
-    - **num_workers=0**: direct Python operations, no IPC.
+    - **Sparse histograms** (mpp counts, cancer/sample types, slide paths):
+      a pipe, written only on slide rotation (very infrequent).  A daemon
+      thread in the main process merges messages as they arrive, so workers
+      never block on a full pipe, and ``to_dict`` merges whatever is left.
+
+    With ``num_workers=0``, the main process writes to the same counters and
+    pipe.
     """
 
     def __init__(self) -> None:
@@ -96,13 +129,30 @@ class _StatsAggregator:
         self._tf_total = context.Value("d", 0.0)
         self._tf_min = context.Value("d", float("inf"))
         self._tf_max = context.Value("d", float("-inf"))
-        # Sparse histogram queue (flushed per-slide, not per-patch)
-        self._histogram_queue = context.SimpleQueue()
-        # Main-process-only accumulators
+        # Sparse histogram pipe (flushed per-slide, not per-patch)
+        self._histogram_reader, self._histogram_writer = context.Pipe(duplex=False)
+        self._histogram_write_lock = context.Lock()
+        # Main-process-only accumulators, guarded by _histogram_lock
+        self._histogram_lock = threading.Lock()
         self._slides_seen: set[str] = set()
         self._mpp_counts: dict = {}
         self._cancer_type_counts: dict = {}
         self._sample_type_counts: dict = {}
+        self._drainer = threading.Thread(
+            target=_drain_histogram_pipe,
+            args=(self._histogram_reader, self._histogram_lock, weakref.ref(self)),
+            name="wsistream-stats",
+            daemon=True,
+        )
+        self._drainer.start()
+
+    def __getstate__(self) -> dict:
+        # Workers only write to the pipe; the read end, its lock, and the drain
+        # thread stay in the main process.
+        state = self.__dict__.copy()
+        for name in ("_histogram_reader", "_histogram_lock", "_drainer"):
+            state[name] = None
+        return state
 
     def add_counters(
         self,
@@ -142,31 +192,38 @@ class _StatsAggregator:
         self, slide_paths: list[str], mpp: dict, cancer: dict, sample: dict
     ) -> None:
         """Push sparse histogram deltas and slide paths (called per-slide, not per-patch)."""
-        self._histogram_queue.put((slide_paths, mpp, cancer, sample))
+        with self._histogram_write_lock:
+            self._histogram_writer.send((slide_paths, mpp, cancer, sample))
 
     def _drain_histograms(self) -> None:
-        """Drain sparse histogram queue into local accumulators."""
-        while not self._histogram_queue.empty():
-            try:
-                slide_paths, mpp, cancer, sample = self._histogram_queue.get()
-            except EOFError:
-                break
-            self._slides_seen.update(slide_paths)
-            for k, v in mpp.items():
-                self._mpp_counts[k] = self._mpp_counts.get(k, 0) + v
-            for k, v in cancer.items():
-                self._cancer_type_counts[k] = self._cancer_type_counts.get(k, 0) + v
-            for k, v in sample.items():
-                self._sample_type_counts[k] = self._sample_type_counts.get(k, 0) + v
+        """Merge messages the drain thread has not read yet; hold ``_histogram_lock``."""
+        while self._histogram_reader.poll():
+            self._merge_histograms(self._histogram_reader.recv())
+
+    def _merge_histograms(self, message: tuple) -> None:
+        """Add one worker's histogram deltas to the local accumulators."""
+        slide_paths, mpp, cancer, sample = message
+        self._slides_seen.update(slide_paths)
+        for k, v in mpp.items():
+            self._mpp_counts[k] = self._mpp_counts.get(k, 0) + v
+        for k, v in cancer.items():
+            self._cancer_type_counts[k] = self._cancer_type_counts.get(k, 0) + v
+        for k, v in sample.items():
+            self._sample_type_counts[k] = self._sample_type_counts.get(k, 0) + v
 
     def to_dict(self) -> dict:
         """Build the public flat stats dict."""
-        self._drain_histograms()
+        with self._histogram_lock:
+            self._drain_histograms()
+            slides_unique = len(self._slides_seen)
+            mpp_counts = dict(self._mpp_counts)
+            cancer_type_counts = dict(self._cancer_type_counts)
+            sample_type_counts = dict(self._sample_type_counts)
 
         result: dict = {
             "pipeline/slides_processed": self._slides_processed.value,
             "pipeline/slides_failed": self._slides_failed.value,
-            "pipeline/slides_unique": len(self._slides_seen),
+            "pipeline/slides_unique": slides_unique,
             "pipeline/patches_extracted": self._patches_extracted.value,
             "pipeline/patches_filtered": self._patches_filtered.value,
         }
@@ -175,12 +232,12 @@ class _StatsAggregator:
             result["pipeline/mean_tissue_fraction"] = self._tf_total.value / tf_count
             result["pipeline/min_tissue_fraction"] = self._tf_min.value
             result["pipeline/max_tissue_fraction"] = self._tf_max.value
-        for mpp, count in self._mpp_counts.items():
+        for mpp, count in mpp_counts.items():
             key = f"pipeline/mpp_{mpp:.2f}" if mpp is not None else "pipeline/mpp_unknown"
             result[key] = count
-        for ct, count in self._cancer_type_counts.items():
+        for ct, count in cancer_type_counts.items():
             result[f"pipeline/cancer_type/{ct}"] = count
-        for st, count in self._sample_type_counts.items():
+        for st, count in sample_type_counts.items():
             safe = st.replace(" ", "_").lower()
             result[f"pipeline/sample_type/{safe}"] = count
         error_count = self._error_count.value
@@ -205,11 +262,12 @@ class _StatsAggregator:
             self._tf_min.value = float("inf")
         with self._tf_max.get_lock():
             self._tf_max.value = float("-inf")
-        self._drain_histograms()
-        self._slides_seen.clear()
-        self._mpp_counts.clear()
-        self._cancer_type_counts.clear()
-        self._sample_type_counts.clear()
+        with self._histogram_lock:
+            self._drain_histograms()
+            self._slides_seen.clear()
+            self._mpp_counts.clear()
+            self._cancer_type_counts.clear()
+            self._sample_type_counts.clear()
 
 
 class WsiStreamDataset(IterableDataset):

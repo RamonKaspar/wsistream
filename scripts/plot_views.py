@@ -132,6 +132,11 @@ def _run_dino_pipeline(slide_path: str, backend_name: str):
         seed=42,
     )
     result = next(iter(pipeline))
+    # The pipeline crops with its own copies of the views, so read the recorded
+    # parameters from those.
+    crops = {view.name: view.crop for view in pipeline.views}
+    global_crops = [crops[f"global{i + 1}"] for i in range(_N_GLOBAL)]
+    local_crop = crops["local"]
     global_params = [c.params[0] for c in global_crops]
     local_params = local_crop.params
     global_size = global_crops[0].size

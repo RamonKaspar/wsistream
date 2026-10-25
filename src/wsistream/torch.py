@@ -222,9 +222,10 @@ class WsiStreamDataset(IterableDataset):
     Each yielded item is a ``dict`` with keys: ``"image"`` (single-view
     mode) or one tensor per configured view, coordinate fields (``"x"``,
     ``"y"``, ``"level"``, ``"patch_size"``, ``"slide_path"``, ``"mpp"``),
-    ``"tissue_fraction"``, and when a ``dataset_adapter`` is configured:
-    ``"patient_id"``, ``"cancer_type"``, ``"tissue_type"``, ``"sample_type"``,
-    ``"dataset_name"``, ``"extra"`` (JSON string).
+    ``"tissue_fraction"``, and the metadata fields ``"patient_id"``,
+    ``"cancer_type"``, ``"tissue_type"``, ``"sample_type"``,
+    ``"dataset_name"``, and ``"extra"`` (JSON string), which are empty
+    strings (``"{}"`` for ``"extra"``) without a ``dataset_adapter``.
 
     Parameters
     ----------

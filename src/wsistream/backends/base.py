@@ -35,8 +35,8 @@ class SlideBackend(ABC):
         """Read a region as an RGB uint8 numpy array of shape (H, W, 3).
 
         ``x`` and ``y`` are level-0 coordinates. Pixels outside the slide are
-        filled with the slide's background color, white unless the format
-        defines another.
+        filled with white, or with the slide's background color where the
+        backend knows one.
         """
         ...
 

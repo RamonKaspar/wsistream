@@ -153,7 +153,8 @@ class SlideMetadata:
     Dataset-specific metadata for a slide.
 
     Populated by a DatasetAdapter. Generic fields are defined here;
-    additional fields go in ``extra``.
+    additional fields go in ``extra``, which must be JSON-serializable
+    because ``WsiStreamDataset`` passes it on as a JSON string.
     """
 
     slide_path: str
@@ -201,8 +202,9 @@ class PatchResult:
         Named view outputs in multi-view mode.  Keys are the view names
         after ``count`` expansion (e.g. ``"global_0"``, ``"local_0"``).
         Each value has shape ``(H_view, W_view, 3)`` where the spatial
-        dimensions are determined by each view's ``RandomResizedCrop.size``
-        (or the primary patch size if no crop is applied).  dtype is
+        dimensions are determined by each view's ``RandomResizedCrop.size``,
+        or without a crop by its ``patch_size_override`` (``mpp_override``
+        views) or the primary patch size.  dtype is
         ``uint8`` unless ``NormalizeTransform`` is used.  ``None`` in
         single-view mode.
     """

@@ -324,7 +324,7 @@ def query_tcga_slides(
                 sampled.extend(group[i] for i in indices)
         records = sampled
 
-    # Print summary
+    # Log a summary
     summary_by_type: dict[str, list[dict]] = {}
     for rec in records:
         summary_by_type.setdefault(rec["cancer_type"], []).append(rec)

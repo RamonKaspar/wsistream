@@ -48,6 +48,7 @@ manifest = query_tcga_slides(
     max_per_cancer_type=10,        # stratified cap per cancer type (None = all)
     seed=42,                       # reproducible subsampling
 )
+# Logs a summary at level INFO:
 # Found 20 slides (18.3 GB):
 #   TCGA-BRCA: 10 slides (10.2 GB)
 #   TCGA-LUAD: 10 slides (8.1 GB)
@@ -83,6 +84,7 @@ paths = download_tcga_slides(
 | `organize_by` | str | `"cancer_type"` | `"cancer_type"` creates subdirectories; `"flat"` puts everything in `output_dir/`. |
 | `skip_existing` | bool | `True` | Skip files that already exist with matching size. |
 | `max_workers` | int | `4` | Number of parallel download threads. |
+| `chunk_size` | int | `8192` | Download chunk size in bytes. |
 
 Downloads run in parallel via a thread pool with a `tqdm` progress bar. For very large-scale downloads (thousands of slides), consider exporting a manifest and using the GDC Data Transfer Tool -- see below.
 
@@ -101,6 +103,8 @@ Then from the command line:
 ```bash
 gdc-client download -m my_manifest.tsv -d /data/tcga
 ```
+
+`gdc-client` saves each slide in a directory named after its file UUID, not after its TCGA project, so `TCGAAdapter` cannot infer the cancer type from the parent directory. Pass `TCGAAdapter(cancer_type=...)`, or move the slides into `TCGA-<PROJECT>` directories.
 
 ### End-to-end example
 

@@ -1,6 +1,6 @@
 # Architecture
 
-`wsistream` uses a pipeline of pluggable components. Each component is defined by an abstract base class with a single method to implement.
+`wsistream` uses a pipeline of pluggable components. Each component is defined by an abstract base class, most with a single method to implement.
 
 <figure markdown="span">
   ![Pipeline Overview](../assets/pipeline_overview.svg)
@@ -75,7 +75,7 @@ pipeline = PatchPipeline(
 )
 ```
 
-Caching is disabled by default (`tissue_mask_cache_size=0`) because reusing a mask changes the behavior of stateful or stochastic tissue detectors and consumes memory. A boolean mask at the default `thumbnail_size=(2048, 2048)` occupies approximately 4 MiB, so 64 entries require approximately 256 MiB, excluding small object overhead. The cache belongs to one `PatchPipeline` instance in one process; with `WsiStreamDataset`, each DataLoader worker and each new dataset iteration creates its own cache, so multiply the configured capacity by the number of active workers when estimating peak memory.
+Caching is disabled by default (`tissue_mask_cache_size=0`) because reusing a mask changes the behavior of stateful or stochastic tissue detectors and consumes memory. A boolean mask at the default `thumbnail_size=(2048, 2048)` occupies up to 4 MiB, less for slides that are not square, so 64 entries require up to 256 MiB, excluding small object overhead. The cache belongs to one `PatchPipeline` instance in one process; with `WsiStreamDataset`, each DataLoader worker and each new dataset iteration creates its own cache, so multiply the configured capacity by the number of active workers when estimating peak memory.
 
 Cache entries are invalidated automatically when the backend object, tissue-detector object, or `thumbnail_size` is replaced. If a detector or backend is mutated in place, a slide file is replaced while the pipeline is alive, or any other input to mask generation changes without replacing those objects, call `pipeline.clear_tissue_mask_cache()` before continuing; for `WsiStreamDataset`, close the active iterator and create a new one. Only successful detections are cached, cached arrays are isolated from sampler mutations, and cache contents are not serialized into worker processes.
 
@@ -103,7 +103,7 @@ The pipeline produces `PatchResult` objects. Here are the key data types:
 |-------|------|-------------|
 | `x`, `y` | `int` | Top-left corner in level-0 pixel coordinates. |
 | `level` | `int` | Pyramid level the patch was read from. |
-| `patch_size` | `int` | Side length read at `level`. Larger than the yielded image when the sampler resamples (`target_mpp` without a matching level, or `ContinuousMagnificationSampler`). |
+| `patch_size` | `int` | Side length read at `level`. Differs from the yielded image when the sampler resamples: larger for `target_mpp` without a matching level, larger or smaller with `ContinuousMagnificationSampler`. |
 | `mpp` | `float` or `None` | Effective microns per pixel of the patch. |
 | `slide_path` | `str` | Path to the source slide. |
 
@@ -114,7 +114,7 @@ The pipeline produces `PatchResult` objects. Here are the key data types:
 | `slide_path` | `str` | Path to the slide. |
 | `dataset_name` | `str` | Name of the dataset (default `"unknown"`). |
 | `patient_id` | `str` or `None` | Patient identifier. |
-| `tissue_type` | `str` or `None` | Tissue type. |
+| `tissue_type` | `str` or `None` | Tissue type as the adapter defines it; `TCGAAdapter` stores the tissue source site code. |
 | `cancer_type` | `str` or `None` | Cancer type (e.g., `TCGA-BRCA`). |
 | `sample_type` | `str` or `None` | Sample type (e.g., `Primary Solid Tumor`). |
 | `extra` | `dict` | Additional fields specific to the dataset. |
@@ -158,7 +158,7 @@ PatchPipeline(
 
 ## Adding new components
 
-Every component follows the same pattern: subclass the base, implement one method.
+Every component follows the same pattern: subclass the base and implement its abstract method. Backends are the exception, with five (`open`, `close`, `read_region`, `get_thumbnail`, `get_properties`).
 
 ```python
 from wsistream.tissue.base import TissueDetector

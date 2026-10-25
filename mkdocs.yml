@@ -56,3 +56,6 @@ nav:
     - GPFM: recipes/gpfm.md
     - Prov-GigaPath: recipes/prov-gigapath.md
     - Phikon: recipes/phikon.md
+
+validation:
+  anchors: warn

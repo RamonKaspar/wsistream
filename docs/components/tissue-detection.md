@@ -1,6 +1,6 @@
 # Tissue Detection
 
-Tissue detectors run on a **low-resolution thumbnail** and produce a binary mask indicating tissue regions. The mask guides the sampler to only propose coordinates within tissue. This is a coarse check -- it runs once per slide.
+Tissue detectors run on a **low-resolution thumbnail** and produce a binary mask indicating tissue regions. The mask guides the sampler to only propose coordinates within tissue. This is a coarse check -- it runs once per slide opening, or once per slide while its mask stays in the [tissue-mask cache](../concepts/architecture.md#tissue-mask-caching).
 
 For fine-grained per-tile quality checks on the actual extracted patch pixels, see [Filters](filters.md).
 

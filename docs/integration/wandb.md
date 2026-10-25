@@ -51,7 +51,7 @@ pipeline.stats_dict()
 # }
 ```
 
-The magnification keys (`mpp_*`) are only present when patches are extracted at known MPP values. The cancer/sample type keys are only present when a `DatasetAdapter` is configured. `error_count` is only present when errors have occurred.
+There is one magnification key (`mpp_*`) per patch mpp, rounded to two decimals; patches from slides without MPP metadata are counted in `pipeline/mpp_unknown`. The cancer/sample type keys are only present when a `DatasetAdapter` is configured. `error_count` is only present when errors have occurred.
 
 For programmatic access to raw data, use the `stats` property:
 

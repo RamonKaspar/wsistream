@@ -11,9 +11,9 @@ class DatasetAdapter(ABC):
     """
     Extract dataset-specific metadata from a slide path.
 
-    Subclass this for each dataset (TCGA, CPTAC, Camelyon, etc.)
-    so that the pipeline can log tissue type, cancer type, patient ID,
-    and other dataset-specific information.
+    Subclass this for each dataset (TCGA, CPTAC, Camelyon, etc.).
+    The metadata is attached to every patch, and the pipeline stats count
+    slide openings by cancer type and sample type.
     """
 
     @abstractmethod

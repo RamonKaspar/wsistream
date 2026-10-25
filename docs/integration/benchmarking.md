@@ -34,15 +34,17 @@ def make_dataset(slide_paths, pool_size, patches_per_slide, patches_per_visit, s
     )
 
 
-results = benchmark_throughput(
-    make_dataset=make_dataset,
-    slide_paths="/data/tcga",          # directory or list of files
-    world_size=4,                      # fixed: determined by your GPU count
-    num_workers=[1, 2, 4, 8],         # sweep: find where throughput saturates
-    pool_size=[4, 8],                  # sweep: trade-off between interleaving and file handles
-    patches_per_visit=[1, 4, 16],     # sweep: I/O locality vs interleaving
-    batch_size=64,
-)
+# Required: the benchmark starts processes with spawn, which re-imports this script.
+if __name__ == "__main__":
+    results = benchmark_throughput(
+        make_dataset=make_dataset,
+        slide_paths="/data/tcga",          # directory or list of files
+        world_size=4,                      # fixed: determined by your GPU count
+        num_workers=[1, 2, 4, 8],         # sweep: find where throughput saturates
+        pool_size=[4, 8],                  # sweep: trade-off between interleaving and file handles
+        patches_per_visit=[1, 4, 16],     # sweep: I/O locality vs interleaving
+        batch_size=64,
+    )
 ```
 
 Output:
@@ -65,9 +67,9 @@ Best: num_workers=4, pool_size=8, patches_per_slide=100, patches_per_visit=4 -> 
 
 Per-rank detail (best config):
   rank 0: 600 patches/sec, batch_time p50=106.5ms p95=112.3ms, peak_rss=4180 MB
-  rank 1: 590 patches/sec, batch_time p50=108.1ms p95=115.0ms, peak_rss=4050 MB
-  rank 2: 605 patches/sec, batch_time p50=105.8ms p95=110.7ms, peak_rss=4120 MB
-  rank 3: 605 patches/sec, batch_time p50=105.9ms p95=111.2ms, peak_rss=4090 MB
+  rank 1: 570 patches/sec, batch_time p50=108.1ms p95=115.0ms, peak_rss=4050 MB
+  rank 2: 615 patches/sec, batch_time p50=105.8ms p95=110.7ms, peak_rss=4120 MB
+  rank 3: 615 patches/sec, batch_time p50=105.9ms p95=111.2ms, peak_rss=4090 MB
 ```
 
 !!! note "The optimal `patches_per_visit` depends on your storage"
@@ -133,7 +135,7 @@ When `world_size * num_workers` exceeds the number of available CPU cores, the b
 | `measure_batches` | int | `50` | Batches to time |
 | `prefetch_factor` | int or None | `2` | DataLoader prefetch factor |
 | `persistent_workers` | bool | `False` | Keep workers alive between iterations |
-| `pin_memory` | bool | `False` | Pin tensors to CUDA memory |
+| `pin_memory` | bool | `False` | Copy batches into page-locked host memory for faster transfer to the GPU |
 | `multiprocessing_context` | str or None | `"spawn"` | Worker process start method |
 | `seed` | int | `42` | Base random seed |
 | `verbose` | bool | `True` | Print progress table |

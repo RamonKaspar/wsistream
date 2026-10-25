@@ -52,7 +52,7 @@ sampler = GridSampler(
 )
 ```
 
-GridSampler is deterministic and exhaustive -- it visits every grid position. This makes it suitable for feature extraction pipelines (e.g., CLAM-style), but not for stochastic online training.
+GridSampler is deterministic and exhaustive -- it visits every grid position. This makes it suitable for feature extraction pipelines (e.g., CLAM-style), but not for stochastic online training. In a `PatchPipeline`, a slide yields at most `patches_per_slide` patches per opening, in scan order, so set `patches_per_slide` to at least the number of grid positions to cover them all; with `cycle=True`, every reopening starts the scan over.
 
 ## MultiMagnificationSampler
 

@@ -46,6 +46,10 @@ class HSVPatchFilter(PatchFilter):
     val_range: tuple[int, int] = (103, 255)
     min_pixel_fraction: float = 0.6
 
+    def __post_init__(self) -> None:
+        if not 0 <= self.min_pixel_fraction <= 1:
+            raise ValueError(f"min_pixel_fraction must be in [0, 1], got {self.min_pixel_fraction}")
+
     def accept(self, patch: np.ndarray) -> bool:
         hsv = cv2.cvtColor(patch, cv2.COLOR_RGB2HSV)
         lower = np.array([self.hue_range[0], self.sat_range[0], self.val_range[0]])

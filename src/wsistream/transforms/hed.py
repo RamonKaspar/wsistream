@@ -99,6 +99,12 @@ class HEDColorAugmentation(PatchTransform):
     def __call__(self, image: np.ndarray) -> np.ndarray:
         from skimage.color import hed_from_rgb, rgb_from_hed
 
+        if image.dtype != np.uint8:
+            # The optical-density conversion assumes pixel values in [0, 255].
+            raise ValueError(
+                f"HEDColorAugmentation expects a uint8 RGB image, got dtype {image.dtype}; "
+                "apply it before NormalizeTransform"
+            )
         sigma_bias = self.effective_sigma_bias
         conv = np.asarray(hed_from_rgb)
         inv = np.asarray(rgb_from_hed)

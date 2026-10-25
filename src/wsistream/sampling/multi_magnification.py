@@ -78,10 +78,14 @@ class MultiMagnificationSampler(PatchSampler):
                     f"mpp_weights length ({len(self.mpp_weights)}) must match "
                     f"target_mpps length ({len(self.target_mpps)})"
                 )
+            if any(w < 0 for w in self.mpp_weights):
+                raise ValueError(f"mpp_weights must be >= 0, got {self.mpp_weights}")
             if sum(self.mpp_weights) <= 0:
                 raise ValueError(f"mpp_weights must sum to > 0, got {self.mpp_weights}")
         if self.patch_size < 1:
             raise ValueError(f"patch_size must be >= 1, got {self.patch_size}")
+        if not 0 <= self.tissue_threshold <= 1:
+            raise ValueError(f"tissue_threshold must be in [0, 1], got {self.tissue_threshold}")
         if self.num_patches < -1 or self.num_patches == 0:
             raise ValueError(f"num_patches must be -1 (infinite) or >= 1, got {self.num_patches}")
         if math.isnan(self.mpp_tolerance) or self.mpp_tolerance < 0:

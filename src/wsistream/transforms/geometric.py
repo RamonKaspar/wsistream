@@ -23,6 +23,10 @@ class RandomFlipRotate(PatchTransform):
     seed: int | None = None
 
     def __post_init__(self) -> None:
+        for name in ("p_hflip", "p_vflip", "p_rot90"):
+            probability = getattr(self, name)
+            if not 0 <= probability <= 1:
+                raise ValueError(f"{name} must be in [0, 1], got {probability}")
         self._rng = np.random.default_rng(self.seed)
 
     def __call__(self, image: np.ndarray) -> np.ndarray:

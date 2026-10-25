@@ -73,6 +73,11 @@ class TestHSVPatchFilterParams:
         filt = HSVPatchFilter(min_pixel_fraction=0.0)
         assert filt.accept(patch)
 
+    @pytest.mark.parametrize("fraction", [-0.1, 1.5, float("nan")])
+    def test_min_pixel_fraction_outside_unit_interval_raises(self, fraction):
+        with pytest.raises(ValueError, match="min_pixel_fraction must be in"):
+            HSVPatchFilter(min_pixel_fraction=fraction)
+
     def test_midnight_defaults(self):
         """Verify Midnight defaults are what we expect."""
         filt = HSVPatchFilter()

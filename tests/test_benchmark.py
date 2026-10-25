@@ -330,3 +330,36 @@ class TestBenchmarkValidation:
                 world_size=2,
                 verbose=False,
             )
+
+
+class TestThreadSettings:
+    def test_restores_the_callers_thread_settings(self, monkeypatch):
+        import os
+
+        import cv2
+        import torch
+
+        monkeypatch.setenv("OMP_NUM_THREADS", "3")
+        monkeypatch.delenv("MKL_NUM_THREADS", raising=False)
+        torch_threads, cv2_threads = torch.get_num_threads(), cv2.getNumThreads()
+        torch.set_num_threads(2)
+        cv2.setNumThreads(2)
+        try:
+            benchmark_throughput(
+                make_dataset=_make_test_dataset,
+                slide_paths=fake_slide_paths(2),
+                num_workers=0,
+                pool_size=1,
+                patches_per_slide=10,
+                batch_size=2,
+                warmup_batches=1,
+                measure_batches=1,
+                verbose=False,
+            )
+            assert os.environ["OMP_NUM_THREADS"] == "3"
+            assert "MKL_NUM_THREADS" not in os.environ
+            assert torch.get_num_threads() == 2
+            assert cv2.getNumThreads() == 2
+        finally:
+            torch.set_num_threads(torch_threads)
+            cv2.setNumThreads(cv2_threads)

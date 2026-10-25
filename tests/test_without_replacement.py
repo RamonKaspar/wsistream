@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tracemalloc
 from collections import Counter
 
 import numpy as np
@@ -14,6 +15,7 @@ from wsistream.sampling.base import (
     CoordinatePool,
     MultiLevelCoordinatePool,
     PatchSampler,
+    _GridPool,
     enumerate_grid_coordinates,
 )
 from wsistream.sampling.grid import GridSampler
@@ -240,6 +242,57 @@ class TestEnumerateGridCoordinates:
 
     def test_patch_larger_than_slide_yields_nothing(self, fake_slide, full_tissue_mask):
         assert enumerate_grid_coordinates(fake_slide, full_tissue_mask, 2, 2048, 0.4) == []
+
+
+# ── _GridPool ──
+
+
+def _pop_all(pool) -> list[PatchCoordinate]:
+    rng = np.random.default_rng(0)
+    return [pool.pop(rng) for _ in range(pool.total)]
+
+
+class TestGridPool:
+    @pytest.mark.parametrize("max_size", [None, 1, 50, 10**6])
+    def test_matches_a_pool_of_enumerated_coordinates(self, fake_slide, max_size):
+        rng = np.random.default_rng(3)
+        tissue_mask = TissueMask(
+            mask=rng.random((40, 40)) < 0.5, downsample=102.4, slide_dimensions=(4096, 4096)
+        )
+        for level, patch_size, mpp in [(0, 64, None), (1, 100, None), (0, 128, 0.5)]:
+            coords = enumerate_grid_coordinates(
+                fake_slide, tissue_mask, level, patch_size, 0.4, mpp=mpp
+            )
+            expected = CoordinatePool(coords, np.random.default_rng(7), max_size=max_size)
+            pool = _GridPool(
+                fake_slide,
+                tissue_mask,
+                level,
+                patch_size,
+                0.4,
+                np.random.default_rng(7),
+                max_size,
+                mpp=mpp,
+            )
+            assert (pool.total, pool.remaining) == (expected.total, expected.remaining)
+            assert _pop_all(pool) == _pop_all(expected)
+            assert pool.exhausted and pool.remaining == 0
+            assert pool.pop(np.random.default_rng(0)) is None
+
+    def test_patch_larger_than_slide_gives_an_empty_pool(self, fake_slide, full_tissue_mask):
+        pool = _GridPool(fake_slide, full_tissue_mask, 2, 2048, 0.4, np.random.default_rng(0))
+        assert pool.exhausted and pool.total == 0
+        assert pool.pop(np.random.default_rng(0)) is None
+
+    def test_stores_far_less_than_a_coordinate_object_each(self, fake_slide, full_tissue_mask):
+        tracemalloc.start()
+        pool = RandomSampler(patch_size=16).build_coordinate_pool(
+            fake_slide, full_tissue_mask, np.random.default_rng(0)
+        )
+        size = tracemalloc.get_traced_memory()[0]
+        tracemalloc.stop()
+        assert pool.total == 256 * 256
+        assert size < 24 * pool.total
 
 
 # ── RandomSampler.build_coordinate_pool ──
@@ -702,8 +755,8 @@ class TestNumPatchesContract:
         pool = sampler.build_coordinate_pool(fake_slide, full_tissue_mask, np.random.default_rng(0))
         # Each level stores at most max_total=5 coordinates
         assert isinstance(pool, MultiLevelCoordinatePool)
-        for lvl_deque in pool._pools.values():
-            assert len(lvl_deque) <= 5
+        for level_pool in pool._pools.values():
+            assert level_pool.total <= 5
 
     def test_pipeline_num_patches_respected(self):
         pipeline = _make_pipeline(

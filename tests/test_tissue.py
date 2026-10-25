@@ -37,6 +37,20 @@ class TestOtsuDetector:
         mask = OtsuTissueDetector(min_area_ratio=0).detect(white_thumbnail)
         assert mask[50, 50]
 
+    def test_min_area_removes_only_small_components(self):
+        thumb = np.full((200, 200, 3), 240, dtype=np.uint8)
+        thumb[20:80, 20:80] = 80  # 3600 px
+        thumb[150:158, 150:158] = 80  # 64 px
+        thumb[100:103, 30:33] = 80  # 9 px
+        thumb[30:33, 150:153] = 80  # 9 px
+        # min_area = int(200 * 200 * 0.001) = 40 px
+        detector = OtsuTissueDetector(blur_ksize=1, morph_close_ksize=0, min_area_ratio=0.001)
+
+        expected = np.zeros((200, 200), dtype=bool)
+        expected[20:80, 20:80] = True
+        expected[150:158, 150:158] = True
+        np.testing.assert_array_equal(detector.detect(thumb), expected)
+
 
 class TestHSVDetector:
     def test_detects_colored_region(self):

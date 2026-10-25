@@ -78,9 +78,11 @@ class OtsuTissueDetector(TissueDetector):
         if self.min_area_ratio > 0:
             min_area = int(mask.size * self.min_area_ratio)
             mask_uint8 = mask.astype(np.uint8)
-            n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_uint8)
-            for i in range(1, n_labels):
-                if stats[i, cv2.CC_STAT_AREA] < min_area:
-                    mask[labels == i] = False
+            _, labels, stats, _ = cv2.connectedComponentsWithStats(mask_uint8)
+            # Look up each pixel's component once, instead of scanning the
+            # whole mask for every component that is too small.
+            keep = stats[:, cv2.CC_STAT_AREA] >= min_area
+            keep[0] = False  # label 0 is the background
+            mask = keep[labels]
 
         return mask

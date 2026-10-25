@@ -194,7 +194,7 @@ This produces 10 views per patch: `global1`, `global2`, and `local_0` through `l
 
 ## Same-location magnification views
 
-Views can also trigger extra WSI reads at a different target MPP. The primary sampler defines the tissue location; each `mpp_override` view keeps the same level-0 center and reads its own patch around that center. If the requested same-center view extends beyond the slide boundary, wsistream preserves the center and fills the pixels outside the slide with the slide's background color, white unless the format defines another. This supports detail/context pairs such as a high-resolution cell-level view and a lower-magnification tissue-context view.
+Views can also trigger extra WSI reads at a different target MPP. The primary sampler defines the tissue location; each `mpp_override` view keeps the same level-0 center and reads its own patch around that center. If the requested same-center view extends beyond the slide boundary, wsistream preserves the center and fills the pixels outside the slide as for any read: with white, or with the slide's background color when OpenSlide reports one. This supports detail/context pairs such as a high-resolution cell-level view and a lower-magnification tissue-context view.
 
 ```python
 pipeline = PatchPipeline(

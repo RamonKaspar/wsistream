@@ -2,7 +2,7 @@
 
 Filters run on **actual extracted patch pixels**, after the patch is read from the WSI but before transforms are applied. They accept or reject individual patches based on their content.
 
-This is distinct from [tissue detection](tissue-detection.md), which runs once per slide on a low-resolution thumbnail. Filters are more expensive (they run per patch) but see the actual pixel content at the sampled resolution.
+This is distinct from [tissue detection](tissue-detection.md), which runs once per slide opening on a low-resolution thumbnail. Filters are more expensive (they run per patch) but see the actual pixel content at the sampled resolution.
 
 <figure markdown="span">
   ![HSVPatchFilter comparison](../assets/filters.svg)

@@ -57,7 +57,7 @@ Coordinate and metadata fields follow the same schema. See [Views](../components
     With a fixed `seed`, every iteration of the same dataset draws new patches, so successive epochs differ whether or not the `DataLoader` uses `persistent_workers`. For the same validation patches every time, create a fresh `WsiStreamDataset` for each validation run with a fixed `seed`, `slide_sampling="sequential"`, and `cycle=False`. A new dataset with the same seed and the same `num_workers` replays the same patches.
 
 !!! note "Tissue-mask cache memory"
-    `tissue_mask_cache_size` is a per-worker, per-iterator entry limit rather than a shared global limit. A boolean mask at the default 2048 x 2048 thumbnail size occupies approximately 4 MiB; multiply the configured capacity by the number of active workers when estimating peak memory. Caching is disabled by default because it also changes the behavior of stateful or stochastic tissue detectors. See [Tissue-mask caching](../concepts/architecture.md#tissue-mask-caching) for invalidation details.
+    `tissue_mask_cache_size` is a per-worker, per-iterator entry limit rather than a shared global limit. A boolean mask at the default 2048 x 2048 thumbnail size occupies up to 4 MiB, less for slides that are not square; multiply the configured capacity by the number of active workers when estimating peak memory. Caching is disabled by default because it also changes the behavior of stateful or stochastic tissue detectors. See [Tissue-mask caching](../concepts/architecture.md#tissue-mask-caching) for invalidation details.
 
 ## Reducing worker IPC with uint8 tensors
 

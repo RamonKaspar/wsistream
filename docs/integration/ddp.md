@@ -107,7 +107,7 @@ my_slides = partition_slides_by_rank(all_slides)  # reads RANK and WORLD_SIZE fr
 ```
 
 !!! warning "Uneven rank partitions"
-    If the number of slides is not divisible by `world_size`, some ranks will get more slides than others. This is usually fine for step-based streaming (`cycle=True` with a fixed number of training steps), but it can deadlock finite `cycle=False` DDP loops because ranks end up doing different numbers of backward passes.
+    If the number of slides is not divisible by `world_size`, some ranks will get more slides than others. This is usually fine for step-based streaming (`cycle=True` with a fixed number of training steps), but it can deadlock finite `cycle=False` DDP loops because ranks end up doing different numbers of backward passes. In step-based streaming, every rank and every DataLoader worker contributes the same number of patches, so slides in smaller shards are sampled more often: with 5 slides on 4 workers, the worker holding 2 slides samples each of them half as often as the others sample theirs. The skew is negligible when every worker holds many slides.
 
 ## Key details
 

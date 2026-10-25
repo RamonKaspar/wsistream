@@ -595,7 +595,27 @@ class PatchPipeline:
                     continue
 
                 if self.views is not None:
-                    views = self._make_views(entry, coord, patch)
+                    try:
+                        overrides = self._read_view_overrides(entry, coord, patch.shape[0])
+                    except Exception as exc:
+                        # Same as a failed patch read: drop the patch, keep the stream.
+                        logger.warning("Error reading view from %s: %s", coord.slide_path, exc)
+                        self._stats.record_error(coord.slide_path, str(exc))
+                        if entry.patch_count >= self.patches_per_slide:
+                            self._close_entry(entry)
+                            pool.pop(pool_idx)
+                            self._fill_pool(pool, slide_queue)
+                            if not pool:
+                                break
+                            pool_idx = pool_idx % len(pool)
+                            visit_count = 0
+                        else:
+                            visit_count += 1
+                            if visit_count >= self.patches_per_visit:
+                                pool_idx = (pool_idx + 1) % len(pool)
+                                visit_count = 0
+                        continue
+                    views = self._make_views(patch, overrides)
                     image = None
                 else:
                     views = None
@@ -704,13 +724,35 @@ class PatchPipeline:
                 view.crop._rng = np.random.default_rng((*base_seed, i, 1))
             cls._reseed_transform(view.transforms, (*base_seed, i, 2))
 
-    def _make_views(
+    def _read_view_overrides(
         self,
         entry: _PoolEntry,
         coord: PatchCoordinate,
+        primary_size: int,
+    ) -> list[np.ndarray | None]:
+        """Read every mpp_override view, with ``None`` for the other views.
+
+        All reads happen before any view is transformed, so a failed read
+        cannot be confused with an error in a transform.
+        """
+        assert self.views is not None
+
+        overrides: list[np.ndarray | None] = []
+        for view in self.views:
+            # For mpp_override views, read from the slide once regardless of count
+            # and copy the result for each repeated output. This avoids N identical disk reads.
+            if view.mpp_override is None:
+                overrides.append(None)
+            else:
+                overrides.append(self._read_view_override(entry, coord, view, primary_size))
+        return overrides
+
+    def _make_views(
+        self,
         primary_patch: np.ndarray,
+        overrides: list[np.ndarray | None],
     ) -> dict[str, np.ndarray]:
-        """Create named views from the primary patch and optional re-reads."""
+        """Create named views from the primary patch and the mpp_override re-reads."""
         assert self.views is not None
 
         shared_primary = primary_patch
@@ -718,15 +760,7 @@ class PatchPipeline:
             shared_primary = self.shared_transforms(shared_primary)
 
         outputs: dict[str, np.ndarray] = {}
-        for view in self.views:
-            # For mpp_override views, read from the slide once regardless of count
-            # and copy the result for each repeated output. This avoids N identical disk reads.
-            override_base: np.ndarray | None = (
-                self._read_view_override(entry, coord, view, primary_patch.shape[0])
-                if view.mpp_override is not None
-                else None
-            )
-
+        for view, override_base in zip(self.views, overrides):
             for idx in range(view.count):
                 name = view.name if view.count == 1 else f"{view.name}_{idx}"
 
@@ -749,12 +783,6 @@ class PatchPipeline:
     ) -> np.ndarray:
         """Read a same-center view at a different target MPP."""
         props = entry.slide.properties
-        if props.mpp is None:
-            raise ValueError(
-                f"View {view.name!r} uses mpp_override={view.mpp_override}, "
-                f"but slide {props.path!r} has no MPP metadata."
-            )
-
         assert view.mpp_override is not None
         patch_size = view.patch_size_override or primary_size
         level, read_size, _ = resolve_mpp_read(
@@ -856,6 +884,7 @@ class PatchPipeline:
         # Everything after open() must be wrapped so that a failure
         # closes the slide — including stats update and PoolEntry creation.
         try:
+            self._check_view_mpp(slide_path, slide)
             tissue_mask = self._load_tissue_mask(slide_path, slide)
 
             if self.replacement == "without_replacement":
@@ -892,6 +921,21 @@ class PatchPipeline:
         except Exception:
             slide.close()
             raise
+
+    def _check_view_mpp(self, slide_path: str, slide: SlideHandle) -> None:
+        """Fail and blacklist a slide without the MPP metadata an mpp_override view needs.
+
+        Every patch of such a slide would fail, so it is not reopened.
+        """
+        if self.views is None or slide.properties.mpp is not None:
+            return
+        for view in self.views:
+            if view.mpp_override is not None:
+                self._failed_slides.add(slide_path)
+                raise ValueError(
+                    f"View {view.name!r} uses mpp_override={view.mpp_override}, "
+                    f"but slide {slide_path!r} has no MPP metadata."
+                )
 
     def _load_tissue_mask(self, slide_path: str, slide: SlideHandle) -> TissueMask:
         """Load a cached tissue mask or detect and cache a new one."""

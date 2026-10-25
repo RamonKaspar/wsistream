@@ -246,6 +246,7 @@ for batch in loader:
 - `shared_transforms` runs once on the primary extracted patch before per-view crop and transform processing. Every view — including those with `transforms=None` — receives the shared-transformed patch. There is no per-view opt-out: if one view must skip `shared_transforms` (e.g. a clean teacher view in a teacher-student setup), apply the geometry transform inside each view's own `transforms` chain instead and omit `shared_transforms`.
 - `shared_transforms` cannot be combined with `mpp_override` views.
 - `patch_size_override` requires `mpp_override` to be set.
-- `mpp_override` requires the slide to have MPP metadata. An error is raised at extraction time if the slide lacks it.
+- `mpp_override` requires the slide to have MPP metadata. A slide that lacks it is counted in `slides_failed` and never reopened; the stream continues with the other slides.
+- A failing `mpp_override` read is handled like a failing patch read: the error is recorded in `pipeline.stats.recent_errors` and the patch is dropped.
 - Views with `mpp_override` re-read from the slide once and then run their own crop and transform chain for each `count` repetition.
 - Seeds set on individual transforms or crops inside `ViewConfig` are overridden by the pipeline's seed at construction time. Use `seed` on `PatchPipeline` for reproducibility.

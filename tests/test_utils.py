@@ -28,6 +28,12 @@ class TestInferBatchSize:
     def test_supports_tensor_like_batch(self):
         assert infer_batch_size(np.zeros((5, 3))) == 5
 
+    def test_uses_first_tensor_of_tuple_batch(self):
+        assert infer_batch_size((np.zeros((7, 3, 16, 16)), np.zeros(7))) == 7
+
+    def test_counts_list_of_samples(self):
+        assert infer_batch_size([{"image": np.zeros((3, 16, 16))}] * 5) == 5
+
     def test_returns_one_when_size_cannot_be_inferred(self):
         assert infer_batch_size(object()) == 1
 

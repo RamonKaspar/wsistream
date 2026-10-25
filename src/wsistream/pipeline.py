@@ -799,12 +799,13 @@ class PatchPipeline:
 
         When cycling, the queue is refilled transparently.  Two guards
         prevent pathological behaviour:
-        - Never open more concurrent copies than ``len(slide_paths)``
-          (avoids duplicate file handles for the same slide).
+        - Never hold two handles to the same slide: a queued slide that is
+          already open is retried after the rest of the queue.
         - Stop if an entire pass over slide_paths fails consecutively
           (avoids infinite retries when every slide is broken).
         """
         consecutive_failures = 0
+        deferred = 0
 
         while len(pool) < self.pool_size:
             if not slide_queue:
@@ -818,6 +819,16 @@ class PatchPipeline:
                     break  # no slides at all
 
             slide_path = slide_queue.popleft()
+            if any(entry.slide.properties.path == slide_path for entry in pool):
+                # Already open: retry it after the rest of the queue, and
+                # stop once every queued slide is open.
+                slide_queue.append(slide_path)
+                deferred += 1
+                if deferred >= len(slide_queue):
+                    break
+                continue
+            deferred = 0
+
             try:
                 entry = self._open_slide(slide_path)
                 pool.append(entry)

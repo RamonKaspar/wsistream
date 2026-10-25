@@ -369,7 +369,14 @@ def _download_one(
         with open(tmp_path, "wb") as f:
             for chunk in resp.iter_content(chunk_size=chunk_size):
                 f.write(chunk)
-        tmp_path.rename(dest_path)
+        # urllib3 1.x does not raise when a response ends before its Content-Length
+        size = tmp_path.stat().st_size
+        if size != rec["file_size"]:
+            raise OSError(
+                f"Incomplete download of {rec['filename']}: {size} of {rec['file_size']} bytes"
+            )
+        # Unlike rename(), replace() also overwrites an existing file on Windows
+        tmp_path.replace(dest_path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise

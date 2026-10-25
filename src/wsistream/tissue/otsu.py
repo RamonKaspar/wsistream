@@ -65,8 +65,8 @@ class OtsuTissueDetector(TissueDetector):
         blurred = cv2.GaussianBlur(gray, (self.blur_ksize, self.blur_ksize), 0)
 
         # BINARY_INV because tissue is darker than background
-        _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        mask = mask.astype(bool)
+        _, thresholded = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        mask = thresholded.astype(bool)
 
         if self.morph_close_ksize > 0:
             kernel = cv2.getStructuringElement(

@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Sequence
 
 import numpy as np
 
 WSI_EXTENSIONS = {".svs", ".tiff", ".tif", ".ndpi", ".mrxs", ".vms", ".scn", ".bif"}
 
 
-def resolve_slide_paths(slide_paths: str | Path | list[str | Path]) -> list[str]:
+def resolve_slide_paths(slide_paths: str | Path | Sequence[str | Path]) -> list[str]:
     """Resolve slide paths from a directory, a single file, or a list.
 
     Accepts a directory path, a single file path, or a list of file/directory

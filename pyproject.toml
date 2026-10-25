@@ -16,6 +16,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Typing :: Typed",
 ]
 dependencies = [
     "numpy>=1.24",
@@ -61,6 +62,9 @@ Issues = "https://github.com/RamonKaspar/wsistream/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+wsistream = ["py.typed"]
+
 [tool.pytest.ini_options]
 markers = [
     "e2e: end-to-end tests requiring real WSI files (pass --slide-dir to enable)",
@@ -70,3 +74,7 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[[tool.mypy.overrides]]
+module = ["psutil", "scipy.*", "tqdm.*"]
+ignore_missing_imports = true

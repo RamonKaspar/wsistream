@@ -18,7 +18,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 import numpy as np
 from torch.utils.data import IterableDataset
@@ -360,7 +360,7 @@ def _ensure_list(x: int | list[int]) -> list[int]:
 
 def benchmark_throughput(
     make_dataset: MakeDatasetFn,
-    slide_paths: str | Path | list[str | Path],
+    slide_paths: str | Path | Sequence[str | Path],
     num_workers: list[int] | int = 4,
     world_size: int = 1,
     pool_size: list[int] | int = 8,
@@ -425,8 +425,8 @@ def benchmark_throughput(
     list[BenchmarkResult]
         One result per configuration tested.
     """
-    slide_paths = resolve_slide_paths(slide_paths)
-    if not slide_paths:
+    slides = resolve_slide_paths(slide_paths)
+    if not slides:
         raise ValueError("slide_paths is empty")
 
     num_workers_list = _ensure_list(num_workers)
@@ -447,7 +447,7 @@ def benchmark_throughput(
     thread_settings = _configure_threads()
 
     if verbose:
-        print(f"Slides: {len(slide_paths)} | World size: {world_size}")
+        print(f"Slides: {len(slides)} | World size: {world_size}")
         print(f"Thread settings: {thread_settings}")
         print(
             f"Batch size: {batch_size}, "
@@ -468,7 +468,7 @@ def benchmark_throughput(
             ) from e
 
     # Validate cycle=True with a probe dataset before running the full sweep
-    probe = make_dataset(slide_paths[:1], pool_size_list[0], pps_list[0], ppv_list[0], seed)
+    probe = make_dataset(slides[:1], pool_size_list[0], pps_list[0], ppv_list[0], seed)
     if hasattr(probe, "_cycle") and not probe._cycle:
         raise ValueError(
             "benchmark_throughput requires cycle=True in the dataset factory. "
@@ -492,11 +492,11 @@ def benchmark_throughput(
     results: list[BenchmarkResult] = []
 
     for nw, ps, pps, ppv in configs:
-        if len(slide_paths) < world_size:
+        if len(slides) < world_size:
             if verbose:
                 print(
                     f"{nw:>11}  {ps:>9}  {pps:>13}  {ppv:>13}  "
-                    f"SKIP: need >= {world_size} slides (have {len(slide_paths)})"
+                    f"SKIP: need >= {world_size} slides (have {len(slides)})"
                 )
             continue
 
@@ -515,7 +515,7 @@ def benchmark_throughput(
         try:
             result = _run_config(
                 make_dataset=make_dataset,
-                slide_paths=slide_paths,
+                slide_paths=slides,
                 num_workers=nw,
                 world_size=world_size,
                 pool_size=ps,

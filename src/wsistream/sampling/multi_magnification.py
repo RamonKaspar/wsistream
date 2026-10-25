@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Iterator
 
@@ -13,6 +14,7 @@ from wsistream.sampling.base import (
     MultiLevelCoordinatePool,
     PatchSampler,
     enumerate_grid_coordinates,
+    resolve_mpp_read,
 )
 from wsistream.sampling.random import RandomSampler
 from wsistream.slide import SlideHandle
@@ -24,10 +26,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MultiMagnificationSampler(PatchSampler):
     """
-    Randomly pick a magnification level, then sample a random patch at it.
+    Randomly pick a target magnification, then sample a random patch at it.
 
     Midnight trains at 0.25, 0.5, 1.0, and 2.0 µm/px. Each iteration
-    randomly selects one of these levels.
+    randomly selects one of these targets. A target without a matching
+    pyramid level is read from a finer level and shrunk to ``patch_size``,
+    as in :class:`RandomSampler` with ``target_mpp``.
 
     Parameters
     ----------
@@ -48,6 +52,10 @@ class MultiMagnificationSampler(PatchSampler):
         slides with very little tissue.
     seed : int or None
         Random seed.
+    mpp_tolerance : float
+        Maximum relative deviation between a pyramid level's mpp and a
+        target for reading that level directly. Default: 0.1.
+        ``float("inf")`` always reads the closest level directly.
     """
 
     target_mpps: list[float] = field(default_factory=lambda: [0.25, 0.5, 1.0, 2.0])
@@ -57,6 +65,7 @@ class MultiMagnificationSampler(PatchSampler):
     tissue_threshold: float = 0.4
     max_consecutive_failures: int = 100
     seed: int | None = None
+    mpp_tolerance: float = 0.1
 
     def __post_init__(self) -> None:
         if not self.target_mpps:
@@ -75,7 +84,14 @@ class MultiMagnificationSampler(PatchSampler):
             raise ValueError(f"patch_size must be >= 1, got {self.patch_size}")
         if self.num_patches < -1 or self.num_patches == 0:
             raise ValueError(f"num_patches must be -1 (infinite) or >= 1, got {self.num_patches}")
+        if math.isnan(self.mpp_tolerance) or self.mpp_tolerance < 0:
+            raise ValueError(f"mpp_tolerance must be >= 0, got {self.mpp_tolerance}")
         self._rng = np.random.default_rng(self.seed)
+
+    @property
+    def output_size(self) -> int:
+        """Side length of yielded patches; the pipeline resizes reads of another size to it."""
+        return self.patch_size
 
     def sample(self, slide: SlideHandle, tissue_mask: TissueMask) -> Iterator[PatchCoordinate]:
         rng = self._rng
@@ -111,14 +127,14 @@ class MultiMagnificationSampler(PatchSampler):
 
         while infinite or count < self.num_patches:
             idx = rng.choice(len(self.target_mpps), p=weights)
-            level = slide.best_level_for_mpp(self.target_mpps[idx])
 
             inner = RandomSampler(
                 patch_size=self.patch_size,
                 num_patches=1,
-                level=level,
+                target_mpp=self.target_mpps[idx],
                 tissue_threshold=self.tissue_threshold,
                 seed=int(rng.integers(0, 2**31)),
+                mpp_tolerance=self.mpp_tolerance,
             )
 
             found = False
@@ -140,13 +156,13 @@ class MultiMagnificationSampler(PatchSampler):
         tissue_mask: TissueMask,
         rng: np.random.Generator,
     ) -> CoordinatePool | MultiLevelCoordinatePool:
-        """Build per-level coordinate pools for without-replacement sampling.
+        """Build per-magnification coordinate pools for without-replacement sampling.
 
         Used by :class:`~wsistream.pipeline.PatchPipeline` when
         ``replacement="without_replacement"``.  Returns a
-        :class:`MultiLevelCoordinatePool` when multiple levels resolve to
-        distinct pyramid levels, or a flat :class:`CoordinatePool` when
-        falling back to a single level (e.g. missing MPP metadata).
+        :class:`MultiLevelCoordinatePool` keyed by ``(level, read_size)``,
+        or a flat :class:`CoordinatePool` when falling back to a single
+        level (e.g. missing MPP metadata).
         """
         props = slide.properties
 
@@ -165,22 +181,26 @@ class MultiMagnificationSampler(PatchSampler):
         weights_raw = self.mpp_weights or [1.0] * len(self.target_mpps)
         total_w = sum(weights_raw)
 
-        level_pools: dict[int, list[PatchCoordinate]] = {}
-        level_weights: dict[int, float] = {}
+        level_pools: dict[tuple[int, int], list[PatchCoordinate]] = {}
+        level_weights: dict[tuple[int, int], float] = {}
 
         for i, target_mpp in enumerate(self.target_mpps):
-            level = slide.best_level_for_mpp(target_mpp)
+            level, read_size, mpp = resolve_mpp_read(
+                props, target_mpp, self.patch_size, self.mpp_tolerance
+            )
+            # On a 40x slide, 0.25 and 0.5 µm/px both read level 0 at different sizes.
+            key = (level, read_size)
             w = weights_raw[i] / total_w
 
-            if level in level_pools:
-                # Multiple target_mpps resolved to the same pyramid level.
-                level_weights[level] += w
+            if key in level_pools:
+                # Multiple target_mpps resolved to the same read.
+                level_weights[key] += w
                 continue
 
             coordinates = enumerate_grid_coordinates(
-                slide, tissue_mask, level, self.patch_size, self.tissue_threshold
+                slide, tissue_mask, level, read_size, self.tissue_threshold, mpp=mpp
             )
-            level_pools[level] = coordinates
-            level_weights[level] = w
+            level_pools[key] = coordinates
+            level_weights[key] = w
 
         return MultiLevelCoordinatePool(level_pools, level_weights, rng, max_total=max_total)

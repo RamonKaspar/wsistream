@@ -99,7 +99,7 @@ The pipeline produces `PatchResult` objects. Here are the key data types:
 |-------|------|-------------|
 | `x`, `y` | `int` | Top-left corner in level-0 pixel coordinates. |
 | `level` | `int` | Pyramid level the patch was read from. |
-| `patch_size` | `int` | Width and height of the patch at the target level. |
+| `patch_size` | `int` | Side length read at `level`. Larger than the yielded image when the sampler resamples (`target_mpp` without a matching level, or `ContinuousMagnificationSampler`). |
 | `mpp` | `float` or `None` | Effective microns per pixel of the patch. |
 | `slide_path` | `str` | Path to the source slide. |
 
@@ -121,7 +121,7 @@ The pipeline produces `PatchResult` objects. Here are the key data types:
 |-----------|----------------|
 | **Backends** | `OpenSlideBackend` (C-based), `TiffSlideBackend` (pure Python, cloud-compatible via fsspec) |
 | **Tissue Detectors** | `OtsuTissueDetector`, `HSVTissueDetector`, `CLAMTissueDetector`, `CombinedTissueDetector` (logical AND of multiple detectors) |
-| **Samplers** | `RandomSampler` (rejection sampling, supports `target_mpp`), `GridSampler` (exhaustive grid, configurable stride), `MultiMagnificationSampler` (samples across multiple pyramid levels), `ContinuousMagnificationSampler` (crop-and-resize at continuously varying magnification) |
+| **Samplers** | `RandomSampler` (rejection sampling, supports `target_mpp`), `GridSampler` (exhaustive grid, configurable stride), `MultiMagnificationSampler` (samples across multiple target magnifications), `ContinuousMagnificationSampler` (crop-and-resize at continuously varying magnification) |
 | **Filters** | `HSVPatchFilter` (per-tile HSV pixel check, Midnight-style) |
 | **Transforms** | `HEDColorAugmentation`, `RandomFlipRotate`, `ResizeTransform`, `NormalizeTransform`, `AlbumentationsWrapper`, `ComposeTransforms` |
 | **Views** | `ViewConfig`, `RandomResizedCrop` for multi-view and multi-crop outputs |

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Iterator
+from typing import Generic, Iterator, TypeVar
 
 import numpy as np
 
 from wsistream.slide import SlideHandle
-from wsistream.types import PatchCoordinate, TissueMask
+from wsistream.types import PatchCoordinate, SlideProperties, TissueMask
+
+_PoolKeyT = TypeVar("_PoolKeyT", int, tuple[int, int])
 
 
 class CoordinatePool:
@@ -53,7 +55,7 @@ class CoordinatePool:
         return self._total
 
 
-class MultiLevelCoordinatePool:
+class MultiLevelCoordinatePool(Generic[_PoolKeyT]):
     """Per-level coordinate pools with weighted random level selection.
 
     Each pyramid level maintains its own shuffled pool.  On every
@@ -67,10 +69,13 @@ class MultiLevelCoordinatePool:
 
     Parameters
     ----------
-    level_pools : dict[int, list[PatchCoordinate]]
-        Coordinates per pyramid level.
-    level_weights : dict[int, float]
-        Sampling weight per level.  Levels with zero weight are dropped.
+    level_pools : dict[int, list[PatchCoordinate]] or dict[tuple[int, int], list[PatchCoordinate]]
+        Coordinates per pyramid level.  Keys may instead be
+        ``(level, read_size)`` pairs that keep several reads of one level
+        apart, as in :meth:`MultiMagnificationSampler.build_coordinate_pool`.
+    level_weights : dict[int, float] or dict[tuple[int, int], float]
+        Sampling weight per key of *level_pools*.  Levels with zero weight
+        are dropped.
     rng : numpy.random.Generator
         Used to shuffle each level's pool.
     max_total : int or None
@@ -85,12 +90,12 @@ class MultiLevelCoordinatePool:
 
     def __init__(
         self,
-        level_pools: dict[int, list[PatchCoordinate]],
-        level_weights: dict[int, float],
+        level_pools: dict[_PoolKeyT, list[PatchCoordinate]],
+        level_weights: dict[_PoolKeyT, float],
         rng: np.random.Generator,
         max_total: int | None = None,
     ) -> None:
-        self._pools: dict[int, deque[PatchCoordinate]] = {}
+        self._pools: dict[_PoolKeyT, deque[PatchCoordinate]] = {}
         self._total = 0
         for level, coords in level_pools.items():
             if level_weights.get(level, 0) <= 0:
@@ -100,8 +105,10 @@ class MultiLevelCoordinatePool:
                 indices = indices[:max_total]
             self._pools[level] = deque(coords[int(i)] for i in indices)
             self._total += len(self._pools[level])
-        self._levels = sorted(self._pools.keys())
-        self._base_weights = {lvl: level_weights[lvl] for lvl in self._levels}
+        self._levels: list[_PoolKeyT] = sorted(self._pools.keys())
+        self._base_weights: dict[_PoolKeyT, float] = {
+            lvl: level_weights[lvl] for lvl in self._levels
+        }
         self._max_total = max_total
         self._pop_count = 0
 
@@ -144,12 +151,19 @@ def enumerate_grid_coordinates(
     level: int,
     patch_size: int,
     tissue_threshold: float,
+    mpp: float | None = None,
 ) -> list[PatchCoordinate]:
-    """Enumerate all non-overlapping grid positions that pass the tissue threshold."""
+    """Enumerate all non-overlapping grid positions that pass the tissue threshold.
+
+    ``patch_size`` is the side length read at ``level``.  ``mpp`` is recorded
+    in every coordinate and defaults to the mpp of ``level``; pass the
+    effective mpp when the read region will be resized.
+    """
     props = slide.properties
     ds = props.level_downsamples[level]
     patch_l0 = int(patch_size * ds)
-    mpp = props.mpp_at_level(level)
+    if mpp is None:
+        mpp = props.mpp_at_level(level)
 
     coordinates: list[PatchCoordinate] = []
     for y in range(0, props.height - patch_l0 + 1, patch_l0):
@@ -166,6 +180,63 @@ def enumerate_grid_coordinates(
                     )
                 )
     return coordinates
+
+
+def resolve_mpp_read(
+    props: SlideProperties,
+    target_mpp: float,
+    patch_size: int,
+    mpp_tolerance: float,
+) -> tuple[int, int, float]:
+    """Choose how to read a ``patch_size`` patch at ``target_mpp``.
+
+    A pyramid level whose mpp is within ``mpp_tolerance`` (relative) of the
+    target is read directly at ``patch_size``.  Otherwise a proportionally
+    larger region is read from the coarsest level finer than the target, to be
+    shrunk to ``patch_size``.  When every level is coarser than the target,
+    level 0 is read at its native resolution, because enlarging cannot add
+    detail.
+
+    Parameters
+    ----------
+    props : SlideProperties
+        Slide metadata with a known ``mpp``.
+    target_mpp : float
+        Desired µm/px of the output patch.
+    patch_size : int
+        Output side length in pixels.
+    mpp_tolerance : float
+        Maximum relative deviation between a level's mpp and ``target_mpp``
+        for reading that level directly.  ``0.1`` reads a 0.2325 µm/px level
+        directly for a 0.25 µm/px target.
+
+    Returns
+    -------
+    tuple[int, int, float]
+        ``(level, read_size, mpp)``: the pyramid level, the side length to read
+        at that level, and the mpp of the patch once the read region is resized
+        to ``patch_size``.
+    """
+    if props.mpp is None:
+        raise ValueError(f"slide {props.path!r} has no MPP metadata")
+    level_mpps = [props.mpp * ds for ds in props.level_downsamples]
+
+    direct = [
+        lvl
+        for lvl, lvl_mpp in enumerate(level_mpps)
+        if abs(lvl_mpp - target_mpp) <= mpp_tolerance * target_mpp
+    ]
+    if direct:
+        level = min(direct, key=lambda lvl: abs(level_mpps[lvl] - target_mpp))
+        return level, patch_size, level_mpps[level]
+
+    finer = [lvl for lvl, lvl_mpp in enumerate(level_mpps) if lvl_mpp < target_mpp]
+    if not finer:
+        return 0, patch_size, level_mpps[0]
+
+    level = max(finer, key=lambda lvl: level_mpps[lvl])
+    read_size = round(patch_size * target_mpp / level_mpps[level])
+    return level, read_size, level_mpps[level] * read_size / patch_size
 
 
 class PatchSampler(ABC):

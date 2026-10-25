@@ -11,13 +11,15 @@ from __future__ import annotations
 
 from collections import Counter
 
+import cv2
 import numpy as np
 import pytest
 
 from wsistream.datasets import TCGAAdapter
 from wsistream.filters import HSVPatchFilter
 from wsistream.pipeline import PatchPipeline
-from wsistream.sampling import RandomSampler
+from wsistream.sampling import MultiMagnificationSampler, RandomSampler
+from wsistream.slide import SlideHandle
 from wsistream.tissue import CombinedTissueDetector, HSVTissueDetector, OtsuTissueDetector
 from wsistream.transforms import (
     ComposeTransforms,
@@ -25,6 +27,7 @@ from wsistream.transforms import (
     RandomFlipRotate,
     ResizeTransform,
 )
+from wsistream.views import ViewConfig
 
 pytestmark = pytest.mark.e2e
 
@@ -194,6 +197,121 @@ class TestTissueMaskCache:
             iterator.close()
 
         assert detector.call_count == 1
+
+
+class TestTargetMagnification:
+    """Patches must have the requested physical resolution on real slides."""
+
+    @staticmethod
+    def _slide_mpps(slides, make_backend) -> dict[str, float | None]:
+        mpps = {}
+        for slide_path in slides:
+            with SlideHandle(slide_path, backend=make_backend()) as slide:
+                mpps[slide_path] = slide.properties.mpp
+        return mpps
+
+    def test_target_mpp_is_delivered(self, slides, make_backend):
+        checked = 0
+        for slide_path, slide_mpp in self._slide_mpps(slides, make_backend).items():
+            if slide_mpp is None or slide_mpp > 0.5 * 1.1:
+                continue  # no MPP metadata, or scanned coarser than the target
+            pipeline = PatchPipeline(
+                slide_paths=[slide_path],
+                backend=make_backend(),
+                tissue_detector=OtsuTissueDetector(),
+                sampler=RandomSampler(patch_size=256, num_patches=-1, target_mpp=0.5, seed=42),
+                pool_size=1,
+                patches_per_slide=5,
+            )
+            with SlideHandle(slide_path, backend=make_backend()) as slide:
+                props = slide.properties
+            results = list(pipeline)
+            assert results
+            for result in results:
+                coord = result.coordinate
+                assert result.image.shape == (256, 256, 3)
+                assert coord.mpp == pytest.approx(0.5, rel=0.1)
+                # 256 px at 0.5 µm/px span 128 µm, whichever level was read.
+                assert coord.patch_size * props.mpp_at_level(coord.level) == pytest.approx(
+                    128, rel=0.1
+                )
+            checked += 1
+        if checked == 0:
+            pytest.skip("No slide is scanned at 0.55 µm/px or finer")
+
+    def test_multi_magnification_targets_are_delivered(self, slides, make_backend):
+        targets = [0.25, 0.5, 1.0, 2.0]
+        slide_mpps = self._slide_mpps(slides, make_backend)
+        pipeline = PatchPipeline(
+            slide_paths=slides,
+            backend=make_backend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=MultiMagnificationSampler(
+                target_mpps=targets, patch_size=256, num_patches=-1, seed=42
+            ),
+            pool_size=min(4, len(slides)),
+            patches_per_slide=40,
+        )
+        delivered: dict[str, set[float]] = {path: set() for path in slides}
+        for result in pipeline:
+            coord = result.coordinate
+            assert result.image.shape == (256, 256, 3)
+            if coord.mpp is None:
+                continue
+            matched = [t for t in targets if coord.mpp == pytest.approx(t, rel=0.1)]
+            # A target finer than the scan falls back to the native level 0.
+            assert matched or coord.mpp == slide_mpps[coord.slide_path]
+            delivered[coord.slide_path].update(matched)
+        for slide_path, slide_mpp in slide_mpps.items():
+            if slide_mpp is not None and slide_mpp <= 0.25 * 1.1:
+                assert delivered[slide_path] == set(targets), slide_path
+
+    def test_mpp_override_view_is_centered_at_its_own_scale(self, slides, make_backend):
+        """The central quarter of a 2.0 µm/px context view shows the 0.5 µm/px primary."""
+        checked = 0
+        for slide_path, slide_mpp in self._slide_mpps(slides, make_backend).items():
+            if slide_mpp is None or slide_mpp > 0.5 * 1.1:
+                continue
+            pipeline = PatchPipeline(
+                slide_paths=[slide_path],
+                backend=make_backend(),
+                tissue_detector=OtsuTissueDetector(),
+                sampler=RandomSampler(
+                    patch_size=256,
+                    num_patches=-1,
+                    target_mpp=0.5,
+                    tissue_threshold=0.8,
+                    seed=42,
+                ),
+                views=[
+                    ViewConfig(name="detail"),
+                    ViewConfig(name="context", mpp_override=2.0, patch_size_override=256),
+                ],
+                pool_size=1,
+                patches_per_slide=8,
+            )
+            correlations = []
+            for result in pipeline:
+                detail = cv2.resize(result.views["detail"], (64, 64), interpolation=cv2.INTER_AREA)
+                detail_gray = cv2.cvtColor(detail, cv2.COLOR_RGB2GRAY).ravel()
+                context_gray = cv2.cvtColor(result.views["context"], cv2.COLOR_RGB2GRAY)
+                # TiffSlide floors level-0 coordinates to whole pixels of the read
+                # level, so allow the context view to be offset by one pixel.
+                correlations.append(
+                    max(
+                        np.corrcoef(
+                            detail_gray,
+                            context_gray[96 + dy : 160 + dy, 96 + dx : 160 + dx].ravel(),
+                        )[0, 1]
+                        for dx in (-1, 0, 1)
+                        for dy in (-1, 0, 1)
+                    )
+                )
+            assert correlations
+            assert np.mean(correlations) > 0.8, slide_path
+            checked += 1
+        if checked == 0:
+            pytest.skip("No slide is scanned at 0.55 µm/px or finer")
 
 
 class TestFullMidnightPipeline:

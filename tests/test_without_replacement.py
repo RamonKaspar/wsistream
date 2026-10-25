@@ -235,6 +235,17 @@ class TestRandomSamplerPool:
         assert coord.level == 1
         assert coord.mpp == 0.5
 
+    def test_resampled_target_mpp_uses_read_size_grid(self, fake_slide, full_tissue_mask):
+        sampler = RandomSampler(patch_size=256, target_mpp=2.0, seed=42)
+        pool = sampler.build_coordinate_pool(fake_slide, full_tissue_mask, np.random.default_rng(0))
+        # 512 px read at level 2 (ds=4.0) → patch_l0 = 2048 → 2 per axis → 4
+        assert pool.total == 4
+        rng = np.random.default_rng(0)
+        while not pool.exhausted:
+            coord = pool.pop(rng)
+            assert (coord.level, coord.patch_size, coord.mpp) == (2, 512, 2.0)
+            assert coord.x % 2048 == 0 and coord.y % 2048 == 0
+
     def test_all_coordinates_unique(self, fake_slide, full_tissue_mask):
         sampler = RandomSampler(patch_size=256, seed=42)
         pool = sampler.build_coordinate_pool(fake_slide, full_tissue_mask, np.random.default_rng(0))
@@ -305,6 +316,20 @@ class TestMultiMagnificationSamplerPool:
         assert isinstance(pool, MultiLevelCoordinatePool)
         # Only one actual level, but still a MultiLevelCoordinatePool
         assert pool.total == 256
+
+    def test_targets_sharing_a_level_keep_separate_pools(self, fake_slide, full_tissue_mask):
+        """1.0 is read directly and 2.0 is resampled, both from level 2."""
+        sampler = MultiMagnificationSampler(target_mpps=[1.0, 2.0], patch_size=256, seed=42)
+        pool = sampler.build_coordinate_pool(fake_slide, full_tissue_mask, np.random.default_rng(0))
+        assert isinstance(pool, MultiLevelCoordinatePool)
+        # 256 px at level 2 → 16 coordinates; 512 px at level 2 → 4 coordinates
+        assert pool.total == 16 + 4
+        rng = np.random.default_rng(0)
+        reads = Counter()
+        while not pool.exhausted:
+            coord = pool.pop(rng)
+            reads[(coord.level, coord.patch_size, coord.mpp)] += 1
+        assert reads == {(2, 256, 1.0): 16, (2, 512, 2.0): 4}
 
     def test_custom_weights_preserved(self, fake_slide, full_tissue_mask):
         sampler = MultiMagnificationSampler(

@@ -23,7 +23,7 @@ from wsistream._utils import resize_patch
 from wsistream.backends.base import SlideBackend
 from wsistream.datasets.base import DatasetAdapter
 from wsistream.filters.base import PatchFilter
-from wsistream.sampling.base import PatchSampler
+from wsistream.sampling.base import PatchSampler, resolve_mpp_read
 from wsistream.sampling.random import RandomSampler
 from wsistream.slide import SlideHandle
 from wsistream.tissue.base import TissueDetector
@@ -500,8 +500,9 @@ class PatchPipeline:
         pool: list[_PoolEntry] = []
 
         # If the sampler requests a fixed output size (e.g.
-        # ContinuousMagnificationSampler crop-and-resize), resize every
-        # patch after reading but before filter / transforms.
+        # ContinuousMagnificationSampler crop-and-resize, or a target_mpp
+        # read from a finer level), resize every patch after reading but
+        # before filter / transforms.
         _sampler_output_size: int | None = getattr(self.sampler, "output_size", None)
 
         self._fill_pool(pool, slide_queue)
@@ -563,8 +564,9 @@ class PatchPipeline:
                 entry.successful_reads += 1
 
                 # Crop-and-resize: if the sampler specifies an output size
-                # (e.g. ContinuousMagnificationSampler), resize the patch
-                # so the filter and transforms see the final resolution.
+                # (e.g. ContinuousMagnificationSampler, or RandomSampler with
+                # target_mpp), resize the patch so the filter and transforms
+                # see the final resolution.
                 if _sampler_output_size is not None and (
                     patch.shape[0] != _sampler_output_size or patch.shape[1] != _sampler_output_size
                 ):
@@ -716,7 +718,7 @@ class PatchPipeline:
             # For mpp_override views, read from the slide once regardless of count
             # and copy the result for each repeated output. This avoids N identical disk reads.
             override_base: np.ndarray | None = (
-                self._read_view_override(entry, coord, view)
+                self._read_view_override(entry, coord, view, primary_patch.shape[0])
                 if view.mpp_override is not None
                 else None
             )
@@ -739,6 +741,7 @@ class PatchPipeline:
         entry: _PoolEntry,
         coord: PatchCoordinate,
         view: ViewConfig,
+        primary_size: int,
     ) -> np.ndarray:
         """Read a same-center view at a different target MPP."""
         props = entry.slide.properties
@@ -749,8 +752,10 @@ class PatchPipeline:
             )
 
         assert view.mpp_override is not None
-        level = entry.slide.best_level_for_mpp(view.mpp_override)
-        patch_size = view.patch_size_override or coord.patch_size
+        patch_size = view.patch_size_override or primary_size
+        level, read_size, _ = resolve_mpp_read(
+            props, view.mpp_override, patch_size, view.mpp_tolerance
+        )
 
         src_ds = props.level_downsamples[coord.level]
         src_l0 = coord.patch_size * src_ds
@@ -758,7 +763,7 @@ class PatchPipeline:
         center_y = coord.y + src_l0 / 2
 
         view_ds = props.level_downsamples[level]
-        view_l0 = patch_size * view_ds
+        view_l0 = read_size * view_ds
 
         x = int(round(center_x - view_l0 / 2))
         y = int(round(center_y - view_l0 / 2))
@@ -774,13 +779,16 @@ class PatchPipeline:
                 stacklevel=4,
             )
 
-        return entry.slide.read_region(
+        image = entry.slide.read_region(
             x=x,
             y=y,
-            width=patch_size,
-            height=patch_size,
+            width=read_size,
+            height=read_size,
             level=level,
         )
+        if read_size != patch_size:
+            image = resize_patch(image, patch_size)
+        return image
 
     def _fill_pool(self, pool: list[_PoolEntry], slide_queue: deque[str]) -> None:
         """Open slides from the queue until the pool is full.

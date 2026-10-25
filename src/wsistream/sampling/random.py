@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Iterator
 
 import numpy as np
 
-from wsistream.sampling.base import CoordinatePool, PatchSampler, enumerate_grid_coordinates
+from wsistream.sampling.base import (
+    CoordinatePool,
+    PatchSampler,
+    enumerate_grid_coordinates,
+    resolve_mpp_read,
+)
 from wsistream.slide import SlideHandle
 from wsistream.types import PatchCoordinate, TissueMask
 
@@ -31,15 +37,21 @@ class RandomSampler(PatchSampler):
     level : int
         Pyramid level to sample from. Ignored when ``target_mpp`` is set.
     target_mpp : float or None
-        Desired µm/px. When set, the sampler picks the pyramid level
-        closest to this value for each slide (via
-        ``SlideHandle.best_level_for_mpp``), ignoring ``level``.
+        Desired µm/px. When set, each slide is read at the pyramid level
+        within ``mpp_tolerance`` of this value, or, when no level is that
+        close, from a finer level that the pipeline shrinks to
+        ``patch_size`` (see :func:`~wsistream.sampling.resolve_mpp_read`).
+        ``level`` is ignored. Slides without MPP metadata are read at level 0.
     tissue_threshold : float
         Minimum tissue fraction to accept a candidate.
     max_retries : int
         Rejection attempts before giving up on one patch.
     seed : int or None
         Random seed.
+    mpp_tolerance : float
+        Maximum relative deviation between a pyramid level's mpp and
+        ``target_mpp`` for reading that level directly. Default: 0.1.
+        ``float("inf")`` always reads the closest level directly.
     """
 
     patch_size: int = 256
@@ -49,6 +61,7 @@ class RandomSampler(PatchSampler):
     tissue_threshold: float = 0.4
     max_retries: int = 50
     seed: int | None = None
+    mpp_tolerance: float = 0.1
 
     def __post_init__(self) -> None:
         if self.patch_size < 1:
@@ -59,33 +72,28 @@ class RandomSampler(PatchSampler):
             raise ValueError(f"target_mpp must be > 0, got {self.target_mpp}")
         if self.max_retries < 1:
             raise ValueError(f"max_retries must be >= 1, got {self.max_retries}")
+        if math.isnan(self.mpp_tolerance) or self.mpp_tolerance < 0:
+            raise ValueError(f"mpp_tolerance must be >= 0, got {self.mpp_tolerance}")
         self._rng = np.random.default_rng(self.seed)
+
+    @property
+    def output_size(self) -> int:
+        """Side length of yielded patches; the pipeline resizes reads of another size to it."""
+        return self.patch_size
 
     def sample(self, slide: SlideHandle, tissue_mask: TissueMask) -> Iterator[PatchCoordinate]:
         rng = self._rng
         props = slide.properties
 
-        # Resolve level: target_mpp takes priority over fixed level
-        if self.target_mpp is not None:
-            level = slide.best_level_for_mpp(self.target_mpp)
-        else:
-            level = self.level
-
-        if level < 0 or level >= props.level_count:
-            raise ValueError(
-                f"level={level} is out of range for slide with "
-                f"{props.level_count} levels (path={props.path!r})"
-            )
-
+        level, read_size, mpp = self._resolve_read(slide)
         ds = props.level_downsamples[level]
-        patch_size_l0 = int(self.patch_size * ds)
+        patch_size_l0 = int(read_size * ds)
         max_x = props.width - patch_size_l0
         max_y = props.height - patch_size_l0
 
         if max_x < 0 or max_y < 0:
             return
 
-        mpp = props.mpp_at_level(level)
         count = 0
         infinite = self.num_patches == -1
 
@@ -107,7 +115,7 @@ class RandomSampler(PatchSampler):
                 x=x,
                 y=y,
                 level=level,
-                patch_size=self.patch_size,
+                patch_size=read_size,
                 mpp=mpp,
                 slide_path=props.path,
             )
@@ -124,20 +132,24 @@ class RandomSampler(PatchSampler):
         Used by :class:`~wsistream.pipeline.PatchPipeline` when
         ``replacement="without_replacement"``.
         """
-        if self.target_mpp is not None:
-            level = slide.best_level_for_mpp(self.target_mpp)
-        else:
-            level = self.level
+        level, read_size, mpp = self._resolve_read(slide)
+        coordinates = enumerate_grid_coordinates(
+            slide, tissue_mask, level, read_size, self.tissue_threshold, mpp=mpp
+        )
+        max_size = None if self.num_patches == -1 else self.num_patches
+        return CoordinatePool(coordinates, rng, max_size=max_size)
 
+    def _resolve_read(self, slide: SlideHandle) -> tuple[int, int, float | None]:
+        """Return the ``(level, read_size, mpp)`` used for every patch of a slide."""
         props = slide.properties
+        if self.target_mpp is not None and props.mpp is not None:
+            return resolve_mpp_read(props, self.target_mpp, self.patch_size, self.mpp_tolerance)
+
+        # target_mpp cannot be honoured without MPP metadata, so read level 0.
+        level = self.level if self.target_mpp is None else 0
         if level < 0 or level >= props.level_count:
             raise ValueError(
                 f"level={level} is out of range for slide with "
                 f"{props.level_count} levels (path={props.path!r})"
             )
-
-        coordinates = enumerate_grid_coordinates(
-            slide, tissue_mask, level, self.patch_size, self.tissue_threshold
-        )
-        max_size = None if self.num_patches == -1 else self.num_patches
-        return CoordinatePool(coordinates, rng, max_size=max_size)
+        return level, self.patch_size, props.mpp_at_level(level)

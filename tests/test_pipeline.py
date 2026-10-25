@@ -293,6 +293,21 @@ class TestPipelineIteration:
             assert result.coordinate.patch_size == 256
             assert 0.0 <= result.tissue_fraction <= 1.0
 
+    def test_resampled_target_mpp_yields_patch_size_images(self):
+        """2.0 µm/px is read as 512 px at level 2 and shrunk to the 256 px patch size."""
+        pipeline = _make_pipeline(
+            n_slides=1,
+            patches_per_slide=3,
+            sampler=RandomSampler(patch_size=256, num_patches=-1, target_mpp=2.0, seed=42),
+        )
+        results = list(pipeline)
+        assert len(results) == 3
+        for result in results:
+            assert result.image.shape == (256, 256, 3)
+            assert (result.coordinate.level, result.coordinate.patch_size) == (2, 512)
+            assert result.coordinate.mpp == 2.0
+        assert pipeline.stats_dict()["pipeline/mpp_2.00"] == 3
+
     def test_stats_updated(self):
         pipeline = _make_pipeline(n_slides=2, patches_per_slide=5)
         list(pipeline)

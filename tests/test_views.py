@@ -726,6 +726,58 @@ class TestMppOverrideFallback:
         assert override_w == primary_patch_size
         assert override_h == primary_patch_size
 
+    def test_mpp_override_without_matching_level_is_resampled(self):
+        """2.0 µm/px has no level, so the view reads 128 px at level 2 and shrinks them."""
+        _TrackBackend.calls.clear()
+        coord = PatchCoordinate(
+            x=2000,
+            y=2000,
+            level=0,
+            patch_size=64,
+            mpp=0.25,
+            slide_path=fake_slide_paths(1)[0],
+        )
+        pipeline = PatchPipeline(
+            slide_paths=fake_slide_paths(1),
+            backend=_TrackBackend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=_FixedSampler(coord),
+            views=[ViewConfig(name="context", mpp_override=2.0, patch_size_override=64)],
+            pool_size=1,
+            patches_per_slide=1,
+        )
+        result = next(iter(pipeline))
+        assert result.views["context"].shape == (64, 64, 3)
+        # The read spans 128 * 4.0 = 512 level-0 pixels around the primary center 2032.
+        assert _TrackBackend.calls[1] == (2032 - 256, 2032 - 256, 2, 128, 128)
+
+    def test_mpp_override_without_patch_size_override_matches_resampled_primary(self):
+        """The default view size is the primary output size, not its larger read size."""
+        _TrackBackend.calls.clear()
+        pipeline = PatchPipeline(
+            slide_paths=fake_slide_paths(1),
+            backend=_TrackBackend(),
+            tissue_detector=OtsuTissueDetector(),
+            sampler=RandomSampler(patch_size=128, num_patches=1, target_mpp=0.6, seed=42),
+            views=[
+                ViewConfig(name="detail"),
+                ViewConfig(name="context", mpp_override=1.0),
+            ],
+            pool_size=1,
+            patches_per_slide=1,
+        )
+        result = next(iter(pipeline))
+        # The primary is read as 154 px at level 1 (mpp=0.5) and shrunk to 128 px.
+        assert _TrackBackend.calls[0][2:] == (1, 154, 154)
+        assert result.views["detail"].shape == (128, 128, 3)
+        assert result.views["context"].shape == (128, 128, 3)
+        assert _TrackBackend.calls[1][2:] == (2, 128, 128)
+
+    @pytest.mark.parametrize("mpp_tolerance", [-0.1, float("nan")])
+    def test_invalid_mpp_tolerance_raises(self, mpp_tolerance):
+        with pytest.raises(ValueError, match="mpp_tolerance"):
+            ViewConfig(name="v", mpp_override=1.0, mpp_tolerance=mpp_tolerance)
+
     def test_mpp_override_count_with_crop_produces_distinct_crops(self):
         """count > 1 with mpp_override + crop must advance the RNG independently per iteration."""
         _TrackBackend.calls.clear()

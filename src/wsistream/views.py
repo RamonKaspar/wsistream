@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import warnings
 from dataclasses import dataclass
 
@@ -174,14 +175,19 @@ class ViewConfig:
         ``count > 1`` produces ``name_0``, ``name_1``, … — each draw
         is independent (separate crop and transform calls).
     mpp_override : float or None
-        Target MPP for a same-center slide re-read at a different pyramid
-        level.  Requires slide MPP metadata.  ``shared_transforms`` cannot
-        be combined with ``mpp_override`` views.
+        Target MPP for a same-center slide re-read.  The view is read at the
+        pyramid level within ``mpp_tolerance`` of this value, or from a finer
+        level and shrunk, as in ``RandomSampler(target_mpp=...)``.  Requires
+        slide MPP metadata.  ``shared_transforms`` cannot be combined with
+        ``mpp_override`` views.
         Default: ``None`` (use the primary extracted patch).
     patch_size_override : int or None
-        Number of pixels to request from the slide when ``mpp_override``
-        triggers a re-read.  Requires ``mpp_override`` to be set.
-        Default: ``None`` (reuse the primary sampler's ``patch_size``).
+        Side length in pixels of the view re-read for ``mpp_override``.
+        Requires ``mpp_override`` to be set.
+        Default: ``None`` (match the primary patch's side length).
+    mpp_tolerance : float
+        Maximum relative deviation between a pyramid level's mpp and
+        ``mpp_override`` for reading that level directly.  Default: ``0.1``.
 
     .. note::
         Any ``seed`` set on ``transforms`` or ``crop`` is overridden by
@@ -195,6 +201,7 @@ class ViewConfig:
     count: int = 1
     mpp_override: float | None = None
     patch_size_override: int | None = None
+    mpp_tolerance: float = 0.1
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -207,6 +214,8 @@ class ViewConfig:
             raise ValueError(f"patch_size_override must be >= 1, got {self.patch_size_override}")
         if self.patch_size_override is not None and self.mpp_override is None:
             raise ValueError("patch_size_override requires mpp_override to be set")
+        if math.isnan(self.mpp_tolerance) or self.mpp_tolerance < 0:
+            raise ValueError(f"mpp_tolerance must be >= 0, got {self.mpp_tolerance}")
         if self.count > 1 and self.crop is None and self.transforms is None:
             warnings.warn(
                 f"ViewConfig(name={self.name!r}, count={self.count}) has no crop or transforms"

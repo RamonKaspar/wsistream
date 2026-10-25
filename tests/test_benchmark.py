@@ -233,6 +233,7 @@ class TestBenchmarkMultiRank:
         assert len(r.per_rank_patches_per_sec) == 2
         assert r.effective_sync_throughput > 0
         assert all(pps > 0 for pps in r.per_rank_patches_per_sec)
+        assert r.peak_rss_mb == pytest.approx(sum(r.per_rank_peak_rss_mb))
 
 
 class TestBenchmarkValidation:

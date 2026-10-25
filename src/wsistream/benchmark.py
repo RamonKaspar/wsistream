@@ -350,7 +350,8 @@ def _run_config(
         total_patches=sum(r["total_patches"] for r in rank_results),
         total_time_sec=max(r["elapsed_sec"] for r in rank_results),
         per_rank_peak_rss_mb=per_rank_rss,
-        peak_rss_mb=max(per_rank_rss),
+        # The ranks run side by side, so the machine needs their sum.
+        peak_rss_mb=sum(per_rank_rss),
     )
 
 

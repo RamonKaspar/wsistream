@@ -125,6 +125,20 @@ class MultiMagnificationSampler(PatchSampler):
             total = sum(weights)
             weights = [w / total for w in weights]
 
+        # One inner sampler per target for the whole slide, so that per-slide
+        # work such as RandomSampler's low-tissue fallback is done once.
+        streams = [
+            RandomSampler(
+                patch_size=self.patch_size,
+                num_patches=-1,
+                target_mpp=target_mpp,
+                tissue_threshold=self.tissue_threshold,
+                seed=int(rng.integers(0, 2**31)),
+                mpp_tolerance=self.mpp_tolerance,
+            ).sample(slide, tissue_mask)
+            for target_mpp in self.target_mpps
+        ]
+
         count = 0
         consecutive_failures = 0
         infinite = self.num_patches == -1
@@ -132,24 +146,14 @@ class MultiMagnificationSampler(PatchSampler):
         while infinite or count < self.num_patches:
             idx = rng.choice(len(self.target_mpps), p=weights)
 
-            inner = RandomSampler(
-                patch_size=self.patch_size,
-                num_patches=1,
-                target_mpp=self.target_mpps[idx],
-                tissue_threshold=self.tissue_threshold,
-                seed=int(rng.integers(0, 2**31)),
-                mpp_tolerance=self.mpp_tolerance,
-            )
-
-            found = False
-            for coord in inner.sample(slide, tissue_mask):
+            coord = next(streams[idx], None)
+            if coord is not None:
                 yield coord
                 count += 1
                 consecutive_failures = 0
-                found = True
-                break
-
-            if not found:
+            else:
+                # No position passes the tissue threshold at this target, or the
+                # read does not fit in the slide.
                 consecutive_failures += 1
                 if consecutive_failures >= self.max_consecutive_failures:
                     break

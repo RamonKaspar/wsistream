@@ -24,12 +24,16 @@ class OpenSlideBackend(SlideBackend):
     def __init__(self) -> None:
         self._slide: OpenSlide | None = None
         self._path: str | None = None
+        self._background: tuple[int, int, int] = (255, 255, 255)
 
     def open(self, path: str) -> None:
         from openslide import OpenSlide
 
         self._path = path
         self._slide = OpenSlide(path)
+        # Fill transparent pixels like OpenSlide.get_thumbnail does.
+        color = self._slide.properties.get("openslide.background-color", "ffffff")
+        self._background = (int(color[0:2], 16), int(color[2:4], 16), int(color[4:6], 16))
 
     def close(self) -> None:
         if self._slide is not None:
@@ -39,7 +43,7 @@ class OpenSlideBackend(SlideBackend):
     def read_region(self, x: int, y: int, level: int, width: int, height: int) -> np.ndarray:
         slide = self._require_open_slide(self._slide)
         region = slide.read_region((x, y), level, (width, height))
-        return self._to_rgb_array(region)
+        return self._to_rgb_array(region, self._background)
 
     def get_thumbnail(self, size: tuple[int, int]) -> np.ndarray:
         slide = self._require_open_slide(self._slide)

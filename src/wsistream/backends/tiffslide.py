@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -38,8 +39,25 @@ class TiffSlideBackend(SlideBackend):
 
     def read_region(self, x: int, y: int, level: int, width: int, height: int) -> np.ndarray:
         slide = self._require_open_slide(self._slide)
-        region = slide.read_region((x, y), level, (width, height))
-        return self._to_rgb_array(region)
+        # TiffSlide pads out-of-bounds pixels with zeros. Read only the part
+        # inside the slide, from non-negative coordinates, onto a white canvas.
+        ds = slide.level_downsamples[level]
+        left = min(width, max(0, math.ceil(-x / ds)))
+        top = min(height, max(0, math.ceil(-y / ds)))
+        region = self._to_rgb_array(
+            slide.read_region(
+                (max(x, 0), max(y, 0)),
+                level,
+                (width - left, height - top),
+                as_array=True,
+                padding=False,
+            )
+        )
+        if region.shape[:2] == (height, width):
+            return region
+        canvas = np.full((height, width, 3), 255, dtype=np.uint8)
+        canvas[top : top + region.shape[0], left : left + region.shape[1]] = region
+        return canvas
 
     def get_thumbnail(self, size: tuple[int, int]) -> np.ndarray:
         slide = self._require_open_slide(self._slide)

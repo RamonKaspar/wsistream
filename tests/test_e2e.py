@@ -479,6 +479,34 @@ class TestPatchFilter:
         assert count > 0, "Full Midnight pipeline produced zero patches."
 
 
+class TestOutOfBoundsReads:
+    """Pixels outside the slide must be the white background, not black."""
+
+    def test_regions_past_the_slide_edges_are_white(self, slides, make_backend):
+        from wsistream.slide import SlideHandle
+
+        for slide_path in slides:
+            with SlideHandle(slide_path, backend=make_backend()) as slide:
+                props = slide.properties
+                width, height = props.dimensions
+
+                corner = slide.read_region(width - 128, height - 128, 256, 256)
+                assert (corner[128:] == 255).all() and (corner[:, 128:] == 255).all()
+                np.testing.assert_array_equal(
+                    corner[:128, :128], slide.read_region(width - 128, height - 128, 128, 128)
+                )
+
+                origin = slide.read_region(-128, -64, 256, 256)
+                assert (origin[:64] == 255).all() and (origin[:, :128] == 255).all()
+                np.testing.assert_array_equal(origin[64:, 128:], slide.read_region(0, 0, 128, 192))
+
+                for level in range(1, props.level_count):
+                    ds = props.level_downsamples[level]
+                    region = slide.read_region(int(width - 100 * ds), 0, 200, 64, level=level)
+                    # Columns from 103 on lie past the edge however the backend rounds.
+                    assert (region[:, 103:] == 255).all(), (slide_path, level)
+
+
 class TestPipelineStats:
     """Stats must be consistent with actual output."""
 

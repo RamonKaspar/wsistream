@@ -773,8 +773,8 @@ class PatchPipeline:
 
             warnings.warn(
                 f"View {view.name!r}: same-center read extends outside slide dimensions "
-                f"({props.width}x{props.height}). The view center is preserved; returned pixels "
-                f"may include backend-defined padding.",
+                f"({props.width}x{props.height}). The view center is preserved; pixels outside "
+                f"the slide are filled with the slide's background color.",
                 UserWarning,
                 stacklevel=4,
             )

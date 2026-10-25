@@ -118,6 +118,30 @@ class TestMetricValues:
         assert metrics["loader/batches_per_sec"] == pytest.approx(100.0)
         assert metrics["loader/patches_per_sec"] == pytest.approx(400.0)
 
+    def test_work_after_mark_step_counts_toward_wall_time(self):
+        """Throughput must cover the whole loop, not only fetch to mark_step()."""
+        mon = MonitoredLoader([{"image": torch.zeros(2, 3, 4, 4)}] * 5, log_every=5)
+        for _ in mon:
+            payload = mon.mark_step()
+            if payload is not None:
+                break
+            time.sleep(0.01)  # e.g. logging or a scheduler step after mark_step()
+
+        # Four 10 ms gaps over five steps.
+        assert payload["loader/step_ms"] >= 8.0
+        assert payload["loader/batches_per_sec"] <= 125.0
+
+    def test_time_between_passes_is_not_counted(self):
+        """Work between epochs, e.g. validation, is not training throughput."""
+        mon = MonitoredLoader([{"image": torch.zeros(2, 3, 4, 4)}] * 2, log_every=4)
+        for _ in mon:
+            mon.mark_step()
+        time.sleep(0.05)
+        for _ in mon:
+            payload = mon.mark_step()
+
+        assert payload["loader/step_ms"] < 10.0
+
     def test_data_wait_positive(self):
         dataset = _make_dataset()
         loader = DataLoader(dataset, batch_size=4, num_workers=0)

@@ -248,7 +248,12 @@ def query_tcga_slides(
         {"op": "=", "content": {"field": "files.data_format", "value": "SVS"}},
     ]
 
-    if cancer_types is not None:
+    if cancer_types is None:
+        # GDC also hosts SVS slide images of other programs, e.g. CGCI and HCMI.
+        filter_content.append(
+            {"op": "=", "content": {"field": "cases.project.program.name", "value": "TCGA"}}
+        )
+    else:
         if isinstance(cancer_types, str):
             cancer_types = [cancer_types]
         if len(cancer_types) == 1:

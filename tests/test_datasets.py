@@ -140,6 +140,15 @@ class TestQueryTcgaSlides:
             query_tcga_slides(slide_type="bogus")
 
     @patch("wsistream.datasets.tcga._gdc_query")
+    def test_all_projects_are_limited_to_tcga(self, mock_query):
+        """GDC also hosts SVS slide images of other programs, e.g. CGCI and HCMI."""
+        mock_query.return_value = []
+        query_tcga_slides()
+        filters = mock_query.call_args.args[0]["content"]
+        program = {"op": "=", "content": {"field": "cases.project.program.name", "value": "TCGA"}}
+        assert program in filters
+
+    @patch("wsistream.datasets.tcga._gdc_query")
     def test_seeded_is_reproducible(self, mock_query):
         mock_query.return_value = _make_gdc_hits(20)
         r1 = query_tcga_slides(max_per_cancer_type=5, seed=99)

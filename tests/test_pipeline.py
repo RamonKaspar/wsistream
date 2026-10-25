@@ -642,6 +642,48 @@ class TestCycleMode:
         patches = list(pipeline)
         assert len(patches) == 15  # exactly one pass
 
+    def test_cycle_does_not_reopen_slides_without_coordinates(self):
+        """A slide without a single coordinate is opened once, not on every pass."""
+        paths = fake_slide_paths(3)
+        sample_calls = Counter()
+
+        class _NoCoordinatesOnSlide1(RandomSampler):
+            def sample(self, slide, tissue_mask):
+                sample_calls[slide.properties.path] += 1
+                if slide.properties.path != paths[1]:
+                    yield from super().sample(slide, tissue_mask)
+
+        pipeline = _make_pipeline(
+            n_slides=3,
+            patches_per_slide=2,
+            sampler=_NoCoordinatesOnSlide1(patch_size=256, num_patches=-1, seed=42),
+            cycle=True,
+        )
+        iterator = iter(pipeline)
+        patches = [next(iterator) for _ in range(20)]
+        assert {p.coordinate.slide_path for p in patches} == {paths[0], paths[2]}
+        assert sample_calls[paths[1]] == 1
+        assert sample_calls[paths[0]] >= 5
+        assert pipeline.stats.slides_failed == 0
+
+    @pytest.mark.parametrize("replacement", ["with_replacement", "without_replacement"])
+    def test_cycle_ends_when_no_slide_has_coordinates(self, replacement):
+        """cycle=True must not reopen slides forever when no position has tissue."""
+
+        class _NoTissue(TissueDetector):
+            def detect(self, thumbnail, downsample=(1.0, 1.0)):
+                return np.zeros(thumbnail.shape[:2], dtype=bool)
+
+        pipeline = _make_pipeline(
+            n_slides=3,
+            tissue_detector=_NoTissue(),
+            replacement=replacement,
+            cycle=True,
+        )
+        assert list(pipeline) == []
+        assert pipeline.stats.slides_processed == 3
+        assert pipeline.stats.slides_failed == 0
+
 
 class TestTissueMaskCache:
     def test_negative_size_raises(self):

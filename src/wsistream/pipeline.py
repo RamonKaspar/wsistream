@@ -334,6 +334,7 @@ class PatchPipeline:
     cycle : bool
         When ``True``, re-queue all slides once the queue is exhausted,
         producing an infinite stream that cycles over the whole corpus.
+        A slide whose sampler yields no coordinates is not re-queued.
     replacement : str
         ``"with_replacement"`` (default) uses the sampler's native
         stochastic iteration.  ``"without_replacement"`` pre-builds a
@@ -530,6 +531,8 @@ class PatchPipeline:
                     # it does not have), so skip the slide instead of the stream.
                     if not isinstance(exc, StopIteration):
                         self._fail_sampling(entry, exc)
+                    elif entry.patch_count == 0 and self.cycle:
+                        self._skip_empty_slide(entry)
                     self._close_entry(entry)
                     pool.pop(pool_idx)
                     self._fill_pool(pool, slide_queue)
@@ -825,6 +828,8 @@ class PatchPipeline:
                     break  # no slides at all
 
             slide_path = slide_queue.popleft()
+            if slide_path in self._failed_slides:
+                continue  # blacklisted after it was queued
             if any(entry.slide.properties.path == slide_path for entry in pool):
                 # Already open: retry it after the rest of the queue, and
                 # stop once every queued slide is open.
@@ -931,6 +936,17 @@ class PatchPipeline:
         logger.warning("Error sampling patches from %s: %s", slide_path, exc)
         self._stats.record_error(slide_path, str(exc))
         self._stats.slides_failed += 1
+        self._failed_slides.add(slide_path)
+
+    def _skip_empty_slide(self, entry: _PoolEntry) -> None:
+        """Blacklist a slide whose sampler yielded no coordinates.
+
+        Typically no position passes the tissue threshold, which reopening
+        does not change. Without this, cycle mode reopens such a slide on
+        every pass, and never ends if no slide yields coordinates.
+        """
+        slide_path = entry.slide.properties.path
+        logger.warning("No patch coordinates in %s; the slide is not reopened", slide_path)
         self._failed_slides.add(slide_path)
 
     def _close_entry(self, entry: _PoolEntry) -> None:

@@ -17,10 +17,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, TypeVar
 
-import cv2
-
 import numpy as np
 
+from wsistream._utils import resize_patch
 from wsistream.backends.base import SlideBackend
 from wsistream.datasets.base import DatasetAdapter
 from wsistream.filters.base import PatchFilter
@@ -569,11 +568,7 @@ class PatchPipeline:
                 if _sampler_output_size is not None and (
                     patch.shape[0] != _sampler_output_size or patch.shape[1] != _sampler_output_size
                 ):
-                    patch = cv2.resize(
-                        patch,
-                        (_sampler_output_size, _sampler_output_size),
-                        interpolation=cv2.INTER_LINEAR,
-                    )
+                    patch = resize_patch(patch, _sampler_output_size)
 
                 # Per-tile quality filter (e.g., HSV pixel check)
                 if self.patch_filter is not None and not self.patch_filter.accept(patch):

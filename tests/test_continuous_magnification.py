@@ -576,6 +576,50 @@ class TestPipelineIntegration:
         # Crop sizes should vary and generally differ from output_size
         assert len(crop_sizes) > 1
 
+    def test_downscaled_crops_are_not_aliased(self):
+        """Crops larger than output_size must be shrunk with area interpolation."""
+
+        class CheckerboardBackend(FakeBackend):
+            """Scanner-like 1x/4x/16x pyramid that returns a 1-pixel checkerboard."""
+
+            def get_properties(self) -> SlideProperties:
+                return SlideProperties(
+                    path=self._path or "fake.svs",
+                    dimensions=(4096, 4096),
+                    level_count=3,
+                    level_dimensions=((4096, 4096), (1024, 1024), (256, 256)),
+                    level_downsamples=(1.0, 4.0, 16.0),
+                    mpp=0.25,
+                    vendor="fake",
+                )
+
+            def read_region(
+                self, x: int, y: int, level: int, width: int, height: int
+            ) -> np.ndarray:
+                board = (np.indices((height, width)).sum(axis=0) % 2 * 255).astype(np.uint8)
+                return np.dstack([board] * 3)
+
+        pipeline = PatchPipeline(
+            slide_paths=fake_slide_paths(1),
+            backend=CheckerboardBackend(),
+            sampler=ContinuousMagnificationSampler(
+                output_size=64,
+                mpp_range=(0.9, 0.99),
+                num_patches=-1,
+                seed=42,
+            ),
+            patches_per_slide=10,
+        )
+        results = list(pipeline)
+
+        assert len(results) == 10
+        for result in results:
+            # Level 0 (0.25 µm/px) is the coarsest level at or below every target,
+            # so each 230-253 px crop is shrunk by a non-integer factor.
+            assert result.coordinate.level == 0
+            assert 230 <= result.coordinate.patch_size <= 253
+            assert result.image.min() >= 126 and result.image.max() <= 129
+
 
 class TestWsiStreamDataset:
     def test_dict_output_shape(self):

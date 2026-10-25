@@ -27,6 +27,22 @@ from wsistream.backends import TiffSlideBackend
 backend = TiffSlideBackend()
 ```
 
+Remote slides are opened through `fsspec`, which needs the filesystem's package installed (`s3fs` for S3, `gcsfs` for Google Cloud Storage). Without further options, the filesystem uses its default credentials, such as the AWS credential chain for S3. Pass `storage_options` to configure it, for example for anonymous access to a public bucket. Open-access TCGA slides are available from the public `tcga-2-open` S3 bucket:
+
+```python
+from wsistream.backends import TiffSlideBackend
+from wsistream.pipeline import PatchPipeline
+
+pipeline = PatchPipeline(
+    slide_paths=[
+        "s3://tcga-2-open/0090f592-7ba6-41e1-b455-793d495e2598/"
+        "TCGA-12-1600-01A-01-TS1.c835118e-575a-4009-8130-701ba69591c1.svs",
+    ],
+    backend=TiffSlideBackend(storage_options={"anon": True}),
+    ...
+)
+```
+
 ## Which to use?
 
 | | OpenSlide | TiffSlide |

@@ -28,6 +28,30 @@ class TestRandomFlipRotate:
         out = RandomFlipRotate(p_hflip=1.0, p_vflip=0, p_rot90=0)(random_patch)
         np.testing.assert_array_equal(out, np.flip(random_patch, axis=1))
 
+    @pytest.mark.parametrize(
+        "shape, dtype",
+        [
+            ((48, 64, 3), np.uint8),
+            ((48, 64, 3), np.float32),
+            ((48, 64, 1), np.uint8),
+            ((48, 64), np.uint8),
+        ],
+    )
+    def test_matches_numpy_flips_and_rotations(self, shape, dtype):
+        """Each output equals numpy's flips and rotations for the same random draws."""
+        image = (np.arange(np.prod(shape)) % 251).astype(dtype).reshape(shape)
+        transform = RandomFlipRotate(seed=0)
+        rng = np.random.default_rng(0)
+        for _ in range(256):
+            expected = image
+            if rng.random() < 0.5:
+                expected = np.flip(expected, axis=1)
+            if rng.random() < 0.5:
+                expected = np.flip(expected, axis=0)
+            if rng.random() < 0.5:
+                expected = np.rot90(expected, k=int(rng.integers(1, 4)))
+            np.testing.assert_array_equal(transform(image), expected)
+
     @pytest.mark.parametrize("name", ["p_hflip", "p_vflip", "p_rot90"])
     @pytest.mark.parametrize("probability", [-0.1, 1.5, float("nan")])
     def test_probability_outside_unit_interval_raises(self, name, probability):

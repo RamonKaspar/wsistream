@@ -11,7 +11,7 @@ import numpy as np
 from wsistream.sampling.base import (
     CoordinatePool,
     PatchSampler,
-    enumerate_grid_coordinates,
+    _GridPool,
     resolve_mpp_read,
 )
 from wsistream.slide import SlideHandle
@@ -192,11 +192,10 @@ class RandomSampler(PatchSampler):
         ``replacement="without_replacement"``.
         """
         level, read_size, mpp = self._resolve_read(slide)
-        coordinates = enumerate_grid_coordinates(
-            slide, tissue_mask, level, read_size, self.tissue_threshold, mpp=mpp
-        )
         max_size = None if self.num_patches == -1 else self.num_patches
-        return CoordinatePool(coordinates, rng, max_size=max_size)
+        return _GridPool(
+            slide, tissue_mask, level, read_size, self.tissue_threshold, rng, max_size, mpp=mpp
+        )
 
     def _resolve_read(self, slide: SlideHandle) -> tuple[int, int, float | None]:
         """Return the ``(level, read_size, mpp)`` used for every patch of a slide."""

@@ -151,7 +151,7 @@ Semantics:
 - **Per-slide**: each slide maintains its own independent pool. There is no corpus-wide coordination.
 - **Unique slide paths**: each slide path may occur only once in the pipeline input. Duplicate paths raise a `ValueError` because a repeated path would make the cycle boundary ambiguous.
 - **Filtered patches are consumed**: coordinates rejected by `patch_filter` are not retried in the same cycle, since the filter is deterministic on the patch content.
-- **Memory**: the pool stores one `PatchCoordinate` (about 130 bytes) per valid grid cell per slide. For a 100,000 x 100,000 slide at patch_size=256, that is up to ~150k coordinates (~20 MB). With many simultaneously open slides or very small patch sizes, this can add up.
+- **Memory**: the pools of `RandomSampler` and `MultiMagnificationSampler` take 16 bytes per valid grid cell. For a 100,000 x 100,000 slide at patch_size=256, that is up to ~150k cells (~2.3 MiB). A pool built from a list of `PatchCoordinate` objects, as in [Writing your own](#writing-your-own), takes about 130 bytes per coordinate. Pools persist across reopenings, so a pipeline (with `WsiStreamDataset`, each DataLoader worker) keeps the pool of every slide it has opened, and memory grows with the number of slides it streams.
 
 ## Writing your own
 

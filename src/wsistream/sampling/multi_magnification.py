@@ -13,7 +13,7 @@ from wsistream.sampling.base import (
     CoordinatePool,
     MultiLevelCoordinatePool,
     PatchSampler,
-    enumerate_grid_coordinates,
+    _GridPool,
     resolve_mpp_read,
 )
 from wsistream.sampling.random import RandomSampler
@@ -177,15 +177,14 @@ class MultiMagnificationSampler(PatchSampler):
                 "Slide %s has no MPP metadata; building single-level pool at level 0",
                 props.path,
             )
-            coordinates = enumerate_grid_coordinates(
-                slide, tissue_mask, 0, self.patch_size, self.tissue_threshold
+            return _GridPool(
+                slide, tissue_mask, 0, self.patch_size, self.tissue_threshold, rng, max_total
             )
-            return CoordinatePool(coordinates, rng, max_size=max_total)
 
         weights_raw = self.mpp_weights or [1.0] * len(self.target_mpps)
         total_w = sum(weights_raw)
 
-        level_pools: dict[tuple[int, int], list[PatchCoordinate]] = {}
+        read_mpps: dict[tuple[int, int], float] = {}
         level_weights: dict[tuple[int, int], float] = {}
 
         for i, target_mpp in enumerate(self.target_mpps):
@@ -196,15 +195,21 @@ class MultiMagnificationSampler(PatchSampler):
             key = (level, read_size)
             w = weights_raw[i] / total_w
 
-            if key in level_pools:
+            if key in level_weights:
                 # Multiple target_mpps resolved to the same read.
                 level_weights[key] += w
                 continue
 
-            coordinates = enumerate_grid_coordinates(
-                slide, tissue_mask, level, read_size, self.tissue_threshold, mpp=mpp
-            )
-            level_pools[key] = coordinates
+            read_mpps[key] = mpp
             level_weights[key] = w
 
-        return MultiLevelCoordinatePool(level_pools, level_weights, rng, max_total=max_total)
+        # The same keys in the same order as MultiLevelCoordinatePool would
+        # shuffle, so the pools draw the same random numbers.
+        pools: dict[tuple[int, int], CoordinatePool] = {
+            key: _GridPool(
+                slide, tissue_mask, key[0], key[1], self.tissue_threshold, rng, max_total, mpp=mpp
+            )
+            for key, mpp in read_mpps.items()
+            if level_weights[key] > 0
+        }
+        return MultiLevelCoordinatePool._from_pools(pools, level_weights, max_total)

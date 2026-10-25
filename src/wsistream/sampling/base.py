@@ -55,6 +55,67 @@ class CoordinatePool:
         return self._total
 
 
+class _GridPool(CoordinatePool):
+    """Pool of the grid positions that pass the tissue threshold, kept as arrays.
+
+    Pops the same coordinates in the same order, for the same draws from
+    *rng*, as ``CoordinatePool(enumerate_grid_coordinates(...), rng, max_size)``,
+    but stores 16 bytes per coordinate instead of a :class:`PatchCoordinate`
+    object and builds each coordinate when it is popped.  The pipeline keeps
+    the pool of every slide it opens, so this matters for many slides.
+    """
+
+    __slots__ = ("_x", "_y", "_fields", "_next")
+
+    def __init__(
+        self,
+        slide: SlideHandle,
+        tissue_mask: TissueMask,
+        level: int,
+        patch_size: int,
+        tissue_threshold: float,
+        rng: np.random.Generator,
+        max_size: int | None = None,
+        mpp: float | None = None,
+    ) -> None:
+        props = slide.properties
+        if mpp is None:
+            mpp = props.mpp_at_level(level)
+        xs, ys, rows, cols = _tissue_grid(slide, tissue_mask, level, patch_size, tissue_threshold)
+        indices = rng.permutation(len(rows))
+        if max_size is not None and max_size < len(indices):
+            indices = indices[:max_size]
+        self._x = xs[cols[indices]]
+        self._y = ys[rows[indices]]
+        self._fields = (level, patch_size, mpp, props.path)
+        self._next = 0
+        self._total = len(indices)
+
+    def pop(self, rng: np.random.Generator) -> PatchCoordinate | None:
+        """Remove and return the next coordinate, or ``None`` if exhausted."""
+        i = self._next
+        if i >= self._total:
+            return None
+        self._next = i + 1
+        level, patch_size, mpp, slide_path = self._fields
+        return PatchCoordinate(
+            x=int(self._x[i]),
+            y=int(self._y[i]),
+            level=level,
+            patch_size=patch_size,
+            mpp=mpp,
+            slide_path=slide_path,
+        )
+
+    @property
+    def remaining(self) -> int:
+        return self._total - self._next
+
+    @property
+    def exhausted(self) -> bool:
+        return self._next >= self._total
+
+
 class MultiLevelCoordinatePool(Generic[_PoolKeyT]):
     """Per-level coordinate pools with weighted random level selection.
 
@@ -95,17 +156,34 @@ class MultiLevelCoordinatePool(Generic[_PoolKeyT]):
         rng: np.random.Generator,
         max_total: int | None = None,
     ) -> None:
-        self._pools: dict[_PoolKeyT, deque[PatchCoordinate]] = {}
-        self._total = 0
-        for level, coords in level_pools.items():
-            if level_weights.get(level, 0) <= 0:
-                continue
-            indices = rng.permutation(len(coords))
-            if max_total is not None and max_total < len(indices):
-                indices = indices[:max_total]
-            self._pools[level] = deque(coords[int(i)] for i in indices)
-            self._total += len(self._pools[level])
-        self._levels: list[_PoolKeyT] = sorted(self._pools.keys())
+        pools = {
+            level: CoordinatePool(coords, rng, max_size=max_total)
+            for level, coords in level_pools.items()
+            if level_weights.get(level, 0) > 0
+        }
+        self._setup(pools, level_weights, max_total)
+
+    @classmethod
+    def _from_pools(
+        cls,
+        pools: dict[_PoolKeyT, CoordinatePool],
+        level_weights: dict[_PoolKeyT, float],
+        max_total: int | None,
+    ) -> MultiLevelCoordinatePool[_PoolKeyT]:
+        """Combine pools of the keys with positive weight, each capped at *max_total*."""
+        pool = cls.__new__(cls)
+        pool._setup(pools, level_weights, max_total)
+        return pool
+
+    def _setup(
+        self,
+        pools: dict[_PoolKeyT, CoordinatePool],
+        level_weights: dict[_PoolKeyT, float],
+        max_total: int | None,
+    ) -> None:
+        self._pools: dict[_PoolKeyT, CoordinatePool] = pools
+        self._total = sum(pool.total for pool in pools.values())
+        self._levels: list[_PoolKeyT] = sorted(pools.keys())
         self._base_weights: dict[_PoolKeyT, float] = {
             lvl: level_weights[lvl] for lvl in self._levels
         }
@@ -117,7 +195,7 @@ class MultiLevelCoordinatePool(Generic[_PoolKeyT]):
         if self._max_total is not None and self._pop_count >= self._max_total:
             return None
 
-        active = [lvl for lvl in self._levels if self._pools[lvl]]
+        active = [lvl for lvl in self._levels if not self._pools[lvl].exhausted]
         if not active:
             return None
 
@@ -126,11 +204,11 @@ class MultiLevelCoordinatePool(Generic[_PoolKeyT]):
 
         idx = int(rng.choice(len(active), p=weights))
         self._pop_count += 1
-        return self._pools[active[idx]].popleft()
+        return self._pools[active[idx]].pop(rng)
 
     @property
     def remaining(self) -> int:
-        reachable = sum(len(self._pools[lvl]) for lvl in self._levels)
+        reachable = sum(self._pools[lvl].remaining for lvl in self._levels)
         if self._max_total is not None:
             return min(self._max_total - self._pop_count, reachable)
         return reachable
@@ -160,27 +238,12 @@ def enumerate_grid_coordinates(
     effective mpp when the read region will be resized.
     """
     props = slide.properties
-    ds = props.level_downsamples[level]
-    patch_l0 = int(patch_size * ds)
     if mpp is None:
         mpp = props.mpp_at_level(level)
+    xs, ys, rows, cols = _tissue_grid(slide, tissue_mask, level, patch_size, tissue_threshold)
 
-    xs = np.arange(0, props.width - patch_l0 + 1, patch_l0)
-    ys = np.arange(0, props.height - patch_l0 + 1, patch_l0)
-    if len(xs) == 0 or len(ys) == 0:
-        return []
-
-    # Look up every grid position at once, with the cell assignment of
-    # TissueMask.contains_tissue, instead of checking positions one by one.
-    h_mask, w_mask = tissue_mask.mask.shape
-    cells_x = np.minimum((xs / tissue_mask.downsample).astype(np.int64), w_mask - 1)
-    cells_y = np.minimum((ys / tissue_mask.downsample).astype(np.int64), h_mask - 1)
-    fractions = tissue_mask.tissue_fraction_grid(patch_l0, patch_l0, cells_x, cells_y)
-    rows, cols = np.nonzero(fractions >= tissue_threshold)
-
-    # np.nonzero is row-major, so the order matches a y-then-x scan of the grid.
     # Coordinates in one row or column share their Python ints, which keeps
-    # large pools small.
+    # large lists small.
     x_values, y_values = xs.tolist(), ys.tolist()
     return [
         PatchCoordinate(
@@ -193,6 +256,36 @@ def enumerate_grid_coordinates(
         )
         for row, col in zip(rows.tolist(), cols.tolist())
     ]
+
+
+def _tissue_grid(
+    slide: SlideHandle,
+    tissue_mask: TissueMask,
+    level: int,
+    patch_size: int,
+    tissue_threshold: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Grid columns ``xs`` and rows ``ys``, and the indices of positions with tissue.
+
+    The returned ``rows`` and ``cols`` index into ``ys`` and ``xs`` in
+    row-major order, so they follow a y-then-x scan of the grid.
+    """
+    props = slide.properties
+    patch_l0 = int(patch_size * props.level_downsamples[level])
+    xs = np.arange(0, props.width - patch_l0 + 1, patch_l0)
+    ys = np.arange(0, props.height - patch_l0 + 1, patch_l0)
+    if len(xs) == 0 or len(ys) == 0:
+        none = np.empty(0, dtype=np.intp)
+        return xs, ys, none, none
+
+    # Look up every grid position at once, with the cell assignment of
+    # TissueMask.contains_tissue, instead of checking positions one by one.
+    h_mask, w_mask = tissue_mask.mask.shape
+    cells_x = np.minimum((xs / tissue_mask.downsample).astype(np.int64), w_mask - 1)
+    cells_y = np.minimum((ys / tissue_mask.downsample).astype(np.int64), h_mask - 1)
+    fractions = tissue_mask.tissue_fraction_grid(patch_l0, patch_l0, cells_x, cells_y)
+    rows, cols = np.nonzero(fractions >= tissue_threshold)
+    return xs, ys, rows, cols
 
 
 def resolve_mpp_read(

@@ -18,6 +18,51 @@ from wsistream.slide import SlideHandle
 from wsistream.types import PatchCoordinate, TissueMask
 
 
+class _TissuePositions:
+    """Every top-left position whose footprint passes the tissue threshold.
+
+    :meth:`TissueMask.tissue_fraction_at` depends on a position only through
+    the mask cell that contains it, so the accepted positions form whole
+    cells. Counting the positions per cell lets :meth:`sample` draw one
+    uniformly without rejection.
+    """
+
+    def __init__(
+        self,
+        tissue_mask: TissueMask,
+        max_x: int,
+        max_y: int,
+        footprint: int,
+        tissue_threshold: float,
+    ) -> None:
+        ds = tissue_mask.downsample
+        h_mask, w_mask = tissue_mask.mask.shape
+        # Same cell assignment as TissueMask.tissue_fraction_at.
+        cell_x = np.minimum((np.arange(max_x + 1) / ds).astype(np.int64), w_mask - 1)
+        cell_y = np.minimum((np.arange(max_y + 1) / ds).astype(np.int64), h_mask - 1)
+        # Positions in one cell are contiguous because cell indices never decrease.
+        self._x_start = np.searchsorted(cell_x, np.arange(w_mask))
+        self._y_start = np.searchsorted(cell_y, np.arange(h_mask))
+        self._x_count = np.bincount(cell_x, minlength=w_mask)
+        accepted = tissue_mask.tissue_fraction_grid(footprint, footprint) >= tissue_threshold
+        counts = accepted * np.outer(np.bincount(cell_y, minlength=h_mask), self._x_count)
+        self._cumulative = np.cumsum(counts.ravel())
+        self._w_mask = w_mask
+
+    @property
+    def empty(self) -> bool:
+        return int(self._cumulative[-1]) == 0
+
+    def sample(self, rng: np.random.Generator) -> tuple[int, int]:
+        """Draw one accepted position uniformly at random."""
+        index = int(rng.integers(0, self._cumulative[-1]))
+        cell = int(np.searchsorted(self._cumulative, index, side="right"))
+        offset = index - (int(self._cumulative[cell - 1]) if cell else 0)
+        my, mx = divmod(cell, self._w_mask)
+        dy, dx = divmod(offset, int(self._x_count[mx]))
+        return int(self._x_start[mx]) + dx, int(self._y_start[my]) + dy
+
+
 @dataclass
 class RandomSampler(PatchSampler):
     """
@@ -45,7 +90,9 @@ class RandomSampler(PatchSampler):
     tissue_threshold : float
         Minimum tissue fraction to accept a candidate.
     max_retries : int
-        Rejection attempts before giving up on one patch.
+        Rejection attempts per patch. When all of them miss, the patch is
+        drawn from the exact set of accepted positions instead, so slides
+        with little tissue still yield every patch.
     seed : int or None
         Random seed.
     mpp_tolerance : float
@@ -96,6 +143,7 @@ class RandomSampler(PatchSampler):
 
         count = 0
         infinite = self.num_patches == -1
+        positions: _TissuePositions | None = None
 
         while infinite or count < self.num_patches:
             found = False
@@ -109,7 +157,16 @@ class RandomSampler(PatchSampler):
                     break
 
             if not found:
-                break
+                # Rejection sampling only misses this often on slides with
+                # little tissue. Both methods draw uniformly from the accepted
+                # positions, so falling back leaves the distribution unchanged.
+                if positions is None:
+                    positions = _TissuePositions(
+                        tissue_mask, max_x, max_y, patch_size_l0, self.tissue_threshold
+                    )
+                if positions.empty:
+                    break
+                x, y = positions.sample(rng)
 
             yield PatchCoordinate(
                 x=x,

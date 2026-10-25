@@ -5,11 +5,14 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 
 from wsistream.transforms.base import PatchTransform
 
 _EPSILON = 1e-6
+# Optical density -log(P + epsilon) of every uint8 value, P = value / 255.
+_OPTICAL_DENSITY = (-np.log(np.arange(256) / 255.0 + _EPSILON)).astype(np.float32)
 
 
 @dataclass
@@ -51,7 +54,8 @@ class HEDColorAugmentation(PatchTransform):
     The RGB/HED conversion follows equations 5 and 7 from Tellez et al. (2018):
     ``S = -log(P + epsilon) M^-1`` and ``P' = exp(-S' M) - epsilon``, with
     ``epsilon=1e-6``.  The published values are in optical-density units, so
-    ``sigma`` needs no rescaling.
+    ``sigma`` needs no rescaling.  The result is computed in float32 and
+    rounded to the nearest uint8 value.
 
     See Also
     --------
@@ -109,13 +113,19 @@ class HEDColorAugmentation(PatchTransform):
         conv = np.asarray(hed_from_rgb)
         inv = np.asarray(rgb_from_hed)
 
-        rgb = image.astype(np.float64) / 255.0
-        concentrations = -np.log(rgb + _EPSILON) @ conv
-
+        alpha = np.empty(3)
+        beta = np.empty(3)
         for ch in range(3):
-            alpha = self._rng.uniform(1.0 - self.sigma, 1.0 + self.sigma)
-            beta = self._rng.uniform(-sigma_bias, sigma_bias)
-            concentrations[:, :, ch] = concentrations[:, :, ch] * alpha + beta
+            alpha[ch] = self._rng.uniform(1.0 - self.sigma, 1.0 + self.sigma)
+            beta[ch] = self._rng.uniform(-sigma_bias, sigma_bias)
 
-        rgb_out = np.exp(-(concentrations @ inv)) - _EPSILON
-        return np.clip(rgb_out * 255, 0, 255).astype(np.uint8)
+        # Deconvolving the optical density (od @ conv), perturbing, and
+        # reconstructing (@ inv) is one affine map of the optical density:
+        # od @ (conv * alpha) @ inv + beta @ inv. cv2.transform applies it to
+        # every pixel in float32, which is several times faster than float64.
+        affine = np.column_stack([((conv * alpha) @ inv).T, beta @ inv]).astype(np.float32)
+        rgb = cv2.exp(-cv2.transform(cv2.LUT(image, _OPTICAL_DENSITY), affine))
+        # Round and saturate (rgb - epsilon) * 255 to uint8. The absolute value
+        # convertScaleAbs takes first only changes values in (-0.0003, 0),
+        # which round to 0 either way.
+        return cv2.convertScaleAbs(rgb, alpha=255.0, beta=-255.0 * _EPSILON)
